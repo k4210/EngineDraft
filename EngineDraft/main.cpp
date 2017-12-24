@@ -9,7 +9,7 @@ struct StructSample
 	static Reflection::Structure& StaticRegisterStructure()
 	{
 		auto& structure = Reflection::Structure::CreateStructure(StaticGetReflectionStructureID());
-		Reflection::CreateProperty<decltype(integer_)>(structure, "integer_", offsetof(StructSample, integer_));
+		DEFINE_PROPERTY(StructSample, integer_);
 		return structure;
 	}
 };
@@ -23,16 +23,21 @@ public:
 	StructSample sample_;
 	std::vector<StructSample> vec_;
 	std::map<StructSample, Reflection::Object*> map_;
+	StructSample arr1_[4];
+	std::array<Reflection::Object*, 4> arr2_;
 	IMPLEMENT_VIRTUAL_REFLECTION(ObjSample);
 
 	static Reflection::Structure& StaticRegisterStructure()
 	{
 		auto& structure = Reflection::Structure::CreateStructure(StaticGetReflectionStructureID());
-		Reflection::CreateProperty<decltype(string_)>(structure, "string_", offsetof(ObjSample, string_));
-		Reflection::CreateProperty<decltype(obj_)>(structure, "obj_", offsetof(ObjSample, obj_));
-		Reflection::CreateProperty<decltype(sample_)>(structure, "sample_", offsetof(ObjSample, sample_));
-		Reflection::CreateProperty<decltype(vec_)>(structure, "vec_", offsetof(ObjSample, vec_));
-		Reflection::CreateProperty<decltype(map_)>(structure, "map_", offsetof(ObjSample, map_));
+		structure.super_id_ = Reflection::Object::StaticGetReflectionStructureID();
+		DEFINE_PROPERTY(ObjSample, string_);
+		DEFINE_PROPERTY(ObjSample, obj_);
+		DEFINE_PROPERTY(ObjSample, sample_);
+		DEFINE_PROPERTY(ObjSample, vec_);
+		DEFINE_PROPERTY(ObjSample, map_);
+		DEFINE_PROPERTY(ObjSample, arr1_);
+		DEFINE_PROPERTY(ObjSample, arr2_);
 		return structure;
 	}
 };
@@ -42,7 +47,7 @@ int main()
 {
 	ObjSample obj;
 	auto& structure = obj.GetReflectionStructure();
-	printf("Property\tname\tType\tprop_id\t\tstruct_id\taccess\tconst\toffset\n");
+	printf("Property\tname\tType\tprop_id\t\tstruct_id\taccess\tconst\toffset\tflags/array_size\n");
 	for (auto& p : structure.properties_)
 	{
 		printf(p.ToString().c_str());

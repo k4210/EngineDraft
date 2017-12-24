@@ -21,6 +21,9 @@
     <ClInclude Include="utils.h">
       <Filter>Utils</Filter>
     </ClInclude>
+    <ClInclude Include="Serialization.h">
+      <Filter>Serialization</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
