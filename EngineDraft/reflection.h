@@ -6,7 +6,7 @@
 #include <array>
 #include "utils.h"
 
-namespace Reflection
+namespace reflection
 {
 	enum class MemberFieldType : uint32
 	{
@@ -23,42 +23,13 @@ namespace Reflection
 		String,
 		ObjectPtr,
 		Struct,
-		Container,	// requires one sub-type
-		Map,		// requires two sub-types
+		Vector,	// requires one handler and one sub-type 
+		Map,		// requires one handler and two sub-types
 		Array,		// requires one sub-type and size
 		//WeakPtr, AssetPtr, etc...
 		__NUM
 	};
-	static_assert(static_cast<uint32>(MemberFieldType::__NUM) <= 16);
-
-	template<typename T> inline const char* ToStr(T e)
-	{
-		static_assert(false, "unknown type");
-	}
-
-	template<> inline const char* ToStr<MemberFieldType>(MemberFieldType e)
-	{
-		switch (e)
-		{
-			case MemberFieldType::Int8: return "Int8";
-			case MemberFieldType::Int16: return "Int16";
-			case MemberFieldType::Int32: return "Int32";
-			case MemberFieldType::Int64: return "Int64";
-			case MemberFieldType::UInt8: return "UInt8";
-			case MemberFieldType::UInt16: return "UInt16";
-			case MemberFieldType::UInt32: return "UInt32";
-			case MemberFieldType::UInt64: return "UInt64";
-			case MemberFieldType::Float: return "Float";
-			case MemberFieldType::Double: return "Double";
-			case MemberFieldType::String: return "String";
-			case MemberFieldType::ObjectPtr: return "ObjPtr";
-			case MemberFieldType::Struct: return "Struct";
-			case MemberFieldType::Container: return "Vector";
-			case MemberFieldType::Map: return "Map";
-			case MemberFieldType::Array: return "Array";
-		}
-		return "error";
-	}
+	static_assert(FitsInBits(static_cast<uint32>(MemberFieldType::__NUM), 5));
 
 	enum class AccessSpecifier
 	{
@@ -66,153 +37,211 @@ namespace Reflection
 		Protected = 1,
 		Public = 2
 	};
-	template<> inline const char* ToStr<AccessSpecifier>(AccessSpecifier e)
-	{
-		switch (e)
-		{
-			case AccessSpecifier::Private: return "Private";
-			case AccessSpecifier::Protected: return "Protected";
-			case AccessSpecifier::Public: return "Public";
-		}
-		return "error";
-	}
 
 	enum class ConstSpecifier
 	{
 		Const = 0,
 		NotConst = 1
 	};
-	template<> inline const char* ToStr<ConstSpecifier>(ConstSpecifier e)
-	{
-		switch (e)
-		{
-			case ConstSpecifier::Const: return "Const";
-			case ConstSpecifier::NotConst: return "NotConst";
-		}
-		return "error";
-	}
 
 	using PropertyID = uint32;
 	using StructID = uint32;
+	using ObjectID = uint64;
 	constexpr uint32 kWrongID = 0xFFFFFFFF;
+	constexpr uint64 kNullObjectID = 0xFFFFFFFFFFFFFFFF;
 
-	constexpr uint32 HashString32(const char* const str, const uint32 value = 0x811c9dc5) noexcept
+	enum class EPropertyUsage
 	{
-		return (str[0] == '\0') ? value : HashString32(&str[1], (value ^ uint32(str[0])) * 0x1000193);
-	}
+		Main = 0,
+		Handler = 1,
+		SubType = 2,
+	};
 
-	constexpr uint64 HashString64(const char* const str)
+	struct IHandler
 	{
-		uint64 hash = 0xcbf29ce484222325;
-		const uint64 prime = 0x100000001b3;
-		for(const char* it = str; *it != '\0'; it++)
+		typedef void(*TCreateHandler)(uint8*);
+
+		virtual uint32 GetNumElements(const uint8*) const = 0;
+
+		//Vec
+		virtual uint8* GetElement(uint8*, uint32) const { Assert(false); return nullptr; };
+		virtual const uint8* GetElement(const uint8*, uint32) const { Assert(false); return nullptr; };
+
+		//Map
+		virtual const uint8* GetKey(const uint8*, uint32) const { Assert(false); return nullptr; }
+		virtual uint8* GetValue(uint8*, uint32) const { Assert(false); return nullptr; }
+		virtual const uint8* GetValue(const uint8*, uint32) const { Assert(false); return nullptr; }
+
+		virtual ~IHandler() = default;
+	};
+
+	namespace details
+	{
+		constexpr uint32 HashString32(const char* const str, const uint32 value = 0x811c9dc5) noexcept
 		{
-			hash = (hash ^ uint64(*it)) * prime;
+			return (str[0] == '\0') ? value : HashString32(&str[1], (value ^ uint32(str[0])) * 0x1000193);
 		}
-		return hash;
-	}
 
-	struct Property
+		constexpr uint64 HashString64(const char* const str)
+		{
+			uint64 hash = 0xcbf29ce484222325;
+			const uint64 prime = 0x100000001b3;
+			for (const char* it = str; *it != '\0'; it++)
+			{
+				hash = (hash ^ uint64(*it)) * prime;
+			}
+			return hash;
+		}
+	};
+
+	class Property
 	{
-	private:
 		uint16 offset_ = 0;
-		uint8 array_size_or_flags_ = 0;
-		uint8 is_sub_type	: 1;	
-		uint8 type_			: 4;	//MemberFieldType
+		uint8 flags_ = 0;	// declared outside reflection system
+		uint8 type_			: 5;	//MemberFieldType
 		uint8 constant_		: 1;	//ConstSpecifier
 		uint8 access_		: 2;	//AccessSpecifier
+		std::array<uint8, 8> handler_data_;
+		static_assert(sizeof(std::array<uint8, 8>) == (sizeof(PropertyID) + sizeof(StructID)));
+		PropertyID& PropertyIDRef()
+		{
+			return *reinterpret_cast<PropertyID*>(&handler_data_[0]);
+		}
+		const PropertyID& PropertyIDRef() const
+		{
+			return *reinterpret_cast<const PropertyID*>(&handler_data_[0]);
+		}
+		StructID& StructIDOrArraySIzeRef()
+		{
+			return *reinterpret_cast<StructID*>(&handler_data_[sizeof(PropertyID)]);
+		}
+		const StructID& StructIDOrArraySIzeRef() const
+		{
+			return *reinterpret_cast<const StructID*>(&handler_data_[sizeof(PropertyID)]);
+		}
 
-		PropertyID property_id_ = kWrongID;
-		StructID optional_struct_id_ = kWrongID; //not owner! addditional type info
+		static const uint16 kHandlerOffsetValue = 0xFFFF;
+		static const uint16 kSubtypeOffsetValue = 0xFFFE;
 	public:
 		DEBUG_ONLY(std::string name_);
+		std::string ToString() const;
 
+		EPropertyUsage	GetPropertyUsage()		const 
+		{ 
+			switch (offset_)
+			{
+			case kHandlerOffsetValue: return EPropertyUsage::Handler;
+			case kSubtypeOffsetValue: return EPropertyUsage::SubType;
+			}
+			return EPropertyUsage::Main;
+		}
 		uint32			GetFieldOffset()		const { return offset_; }
-		uint8			GetFlags()				const { Assert(!is_sub_type); return array_size_or_flags_; } // specific flags, are not part of the refection system
-		uint8			GetArraySize()			const { Assert( is_sub_type); return array_size_or_flags_; }
-		PropertyID		GetPropertyID()			const { return property_id_; }
-		StructID		GetOptionalStructID()	const { return optional_struct_id_; }
-		bool			IsSubType()				const { return 0 != is_sub_type; }
+		PropertyID		GetPropertyID()			const { return PropertyIDRef(); }
 		MemberFieldType GetFieldType()			const { return static_cast<MemberFieldType>(type_); }
 		ConstSpecifier	GetConstSpecifier()		const { return static_cast<ConstSpecifier>(constant_); }
 		AccessSpecifier GetAccessSpecifier()	const { return static_cast<AccessSpecifier>(access_); }
-
-		std::string ToString() const
+		uint8			GetFlags()				const { return flags_; }
+		uint32			GetArraySize()			const 
+		{ 
+			Assert(MemberFieldType::Array == GetFieldType()); 
+			return StructIDOrArraySIzeRef();
+		}
+		StructID		GetOptionalStructID()	const 
+		{ 
+			Assert(MemberFieldType::Struct == GetFieldType() || MemberFieldType::ObjectPtr == GetFieldType());
+			return StructIDOrArraySIzeRef();
+		}
+		const IHandler&	GetHandler()			const
 		{
-			std::string str = "Property\t";
-			DEBUG_ONLY(str += name_ + '\t');
-			str += ToStr(GetFieldType());
-
-			{
-				char buff[260];
-				sprintf_s(buff, "\t%.8X\t%.8X\t", GetPropertyID(), GetOptionalStructID());
-				str += buff;
-			}
-			if (!IsSubType())
-			{
-				str += ToStr(GetAccessSpecifier());
-				str += '\t';
-				str += ToStr(GetConstSpecifier());
-				str += '\t';
-				str += std::to_string(GetFieldOffset());
-				char buff[260];
-				sprintf_s(buff, "\t%.2X\t", GetFlags());
-				str += buff;
-			}
-			else
-			{
-				char buff[260];
-				sprintf_s(buff, "\t\t\t\t%.2X\t", GetArraySize());
-				str += buff;
-			}
-			str += "\n";
-			return str;
+			Assert(EPropertyUsage::Handler == GetPropertyUsage());
+			return *reinterpret_cast<const IHandler*>(handler_data_.data());
+		}
+	private:
+		IHandler*		GetHandler()
+		{
+			Assert(EPropertyUsage::Handler == GetPropertyUsage());
+			return reinterpret_cast<IHandler*>(handler_data_.data());
 		}
 
-		Property() 
-			: is_sub_type(0)
-			, type_(0)
-			, constant_(0)
-			, access_(0) 
-		{}
-		Property(uint16 offset, MemberFieldType type, ConstSpecifier constant, AccessSpecifier access, PropertyID property_id, StructID struct_id = kWrongID)
+	public:
+		Property(uint16 offset, MemberFieldType type, ConstSpecifier constant, AccessSpecifier access
+			, PropertyID property_id, uint8 flags, StructID optional_struct_id_or_num = kWrongID)
 			: offset_(offset)
-			, is_sub_type(0)
+			, flags_(flags)
 			, type_(static_cast<uint8>(type))
 			, constant_(static_cast<uint8>(constant))
 			, access_(static_cast<uint8>(access))
-			, property_id_(property_id)
-			, optional_struct_id_(struct_id)
-		{}
-		Property(MemberFieldType type, PropertyID property_id, StructID struct_id, uint8 array_size = 0)
-			: array_size_or_flags_(array_size)
-			, is_sub_type(1)
+		{
+			PropertyIDRef() = property_id;
+			StructIDOrArraySIzeRef() = optional_struct_id_or_num;
+			Assert(EPropertyUsage::Main == GetPropertyUsage());
+		}
+
+		Property(MemberFieldType type, PropertyID property_id, StructID optional_struct_id_or_num = kWrongID)
+			: offset_(kSubtypeOffsetValue)
 			, type_(static_cast<uint8>(type))
+			, constant_(0) 
+			, access_(0)
+		{
+			PropertyIDRef() = property_id;
+			StructIDOrArraySIzeRef() = optional_struct_id_or_num;
+			Assert(EPropertyUsage::SubType == GetPropertyUsage());
+		}
+
+		Property(IHandler::TCreateHandler create_func)
+			: type_(0)
 			, constant_(0)
 			, access_(0)
-			, property_id_(property_id)
-			, optional_struct_id_(struct_id)
-		{}
+			, offset_(kHandlerOffsetValue)
+		{
+			create_func(handler_data_.data());
+		}
 
 		Property(const Property& other) = default;
 		Property& operator=(const Property& other) = default;
 		Property(Property&& other) = default;
 		Property& operator=(Property&& other) = default;
-		~Property() = default;
+		~Property()
+		{
+			if (EPropertyUsage::Handler == GetPropertyUsage())
+			{
+				GetHandler()->~IHandler();
+			}
+		}
 	};
 
+	class Object;
 	struct Structure
 	{
 		StructID id_ = kWrongID;
 		StructID super_id_ = kWrongID;
-		std::vector<Property> properties_; //sorted by id
+		std::vector<Property> properties_; //sorted by offset of main prop
+		uint32 size_ = 0;
 		DEBUG_ONLY(std::string name_);
+
+		typedef ObjectID(*GetCustomObjID)(const Object* obj);
+		GetCustomObjID get_obj_id = nullptr;
+		typedef Object* (*ObjFromID)(ObjectID);
+		ObjFromID obj_from_id = nullptr;
+
 	private: 
 		Structure(StructID id) : id_(id) {}
 
 	public:
 		static Structure& CreateStructure(const StructID id);
 		static const Structure& GetStructure(const StructID id);
+		bool RepresentsObjectClass() const
+		{
+			return nullptr != get_obj_id && nullptr != obj_from_id && kWrongID != super_id_;
+		}
+		bool RepresentNonObjectStructure() const
+		{
+			return nullptr == get_obj_id 
+				&& nullptr == obj_from_id 
+				&& kWrongID == super_id_
+				&& !properties_.empty();
+		}
+		bool Validate() const;
 	};
 
 	class Object
@@ -220,17 +249,12 @@ namespace Reflection
 	public: 
 		static StructID StaticGetReflectionStructureID()
 		{ 
-			return HashString32("Object");
+			return details::HashString32("Object");
 		}
 
 		virtual StructID GetReflectionStructureID() const
 		{ 
 			return StaticGetReflectionStructureID(); 
-		}
-
-		const Structure& GetReflectionStructure() const
-		{
-			return Structure::GetStructure(GetReflectionStructureID());
 		}
 
 		static Structure& StaticRegisterStructure()
@@ -241,129 +265,212 @@ namespace Reflection
 		virtual ~Object() = default;
 	};
 
-	template<class C> struct RegisterStruct
+	uint32 NextPropertyIndexOnThisLevel(const std::vector<Property>& properties, uint32 idx);
+
+	namespace details
 	{
-		RegisterStruct(DEBUG_ONLY(const char* name))
+		template<class C> struct RegisterStruct
 		{
-			C::StaticRegisterStructure()DEBUG_ONLY(.name_ = name);
+			RegisterStruct(DEBUG_ONLY(const char* name))
+			{
+				C::StaticRegisterStructure()DEBUG_ONLY(.name_ = name);
+			}
+		};
+
+		template<typename V> struct VectorHandler : public IHandler
+		{
+			static void CreateHandler(uint8* ptr)
+			{
+				new (ptr) VectorHandler<V>();
+			}
+
+			static const V& GetVector(const uint8* vec_ptr)
+			{
+				Assert(vec_ptr);
+				return *reinterpret_cast<const V*>(vec_ptr);
+			}
+
+			static V& GetVector(uint8* vec_ptr)
+			{
+				Assert(vec_ptr);
+				return *reinterpret_cast<V*>(vec_ptr);
+			}
+
+			uint32 GetNumElements(const uint8* vec_ptr) const override
+			{
+				return GetVector(vec_ptr).size();
+			}
+
+			uint8* GetElement(uint8* vec_ptr, uint32 element_index) const override
+			{
+				return reinterpret_cast<uint8*>(&(GetVector(vec_ptr)[element_index]));
+			}
+
+			const uint8* GetElement(const uint8* vec_ptr, uint32 element_index) const override
+			{
+				return reinterpret_cast<const uint8*>(&(GetVector(vec_ptr)[element_index]));
+			}
+
+			virtual ~VectorHandler() = default;
+		};
+
+		template<class M> struct MapHandler : public IHandler
+		{
+			static void CreateHandler(uint8* ptr)
+			{
+				new (ptr) MapHandler<M>();
+			}
+
+			static auto GetCIter(const uint8* map_ptr, uint32 idx)
+			{
+				Assert(map_ptr);
+				auto it = reinterpret_cast<const M*>(map_ptr)->begin();
+				std::advance(it, idx);
+				return it;
+			}
+
+			static auto GetIter(uint8* map_ptr, uint32 idx)
+			{
+				Assert(map_ptr);
+				auto it = reinterpret_cast<M*>(map_ptr)->begin();
+				std::advance(it, idx);
+				return it;
+			}
+
+			uint32 GetNumElements(const uint8* map_ptr) const override
+			{
+				return reinterpret_cast<const M*>(map_ptr)->size();
+			}
+			//canot get writable/mutable key
+			const uint8* GetKey(const uint8* map_ptr, uint32 index) const 
+			{ 
+				return reinterpret_cast<const uint8*>(&GetCIter(map_ptr, index)->first);
+			}
+			uint8* GetValue(uint8* map_ptr, uint32 index) const 
+			{ 
+				return reinterpret_cast<uint8*>(&GetIter(map_ptr, index)->second);
+			}
+			const uint8* GetValue(const uint8* map_ptr, uint32 index) const 
+			{ 
+				return reinterpret_cast<const uint8*>(&GetCIter(map_ptr, index)->second);
+			}
+
+			virtual ~MapHandler() = default;
+		};
+
+		template<typename M> constexpr MemberFieldType GetMemberType()
+		{
+			static_assert(std::is_class<M>::value || std::is_array<M>::value, "Unknown type!");
+
+			if constexpr(std::is_array<M>::value || is_std_array<M>::value)
+				return MemberFieldType::Array;
+			else if constexpr(is_vector<M>::value)
+				return MemberFieldType::Vector;
+			else if constexpr (is_map<M>::value)
+				return MemberFieldType::Map;
+			else
+				return MemberFieldType::Struct;
+		}
+		template<> constexpr MemberFieldType GetMemberType<int8>() { return MemberFieldType::Int8; }
+		template<> constexpr MemberFieldType GetMemberType<uint8>() { return MemberFieldType::UInt8; }
+		template<> constexpr MemberFieldType GetMemberType<int16>() { return MemberFieldType::Int16; }
+		template<> constexpr MemberFieldType GetMemberType<uint16>() { return MemberFieldType::UInt16; }
+		template<> constexpr MemberFieldType GetMemberType<int32>() { return MemberFieldType::Int32; }
+		template<> constexpr MemberFieldType GetMemberType<uint32>() { return MemberFieldType::UInt32; }
+		template<> constexpr MemberFieldType GetMemberType<int64>() { return MemberFieldType::Int64; }
+		template<> constexpr MemberFieldType GetMemberType<uint64>() { return MemberFieldType::UInt64; }
+		template<> constexpr MemberFieldType GetMemberType<float>() { return MemberFieldType::Float; }
+		template<> constexpr MemberFieldType GetMemberType<double>() { return MemberFieldType::Double; }
+		template<> constexpr MemberFieldType GetMemberType<std::string>() { return MemberFieldType::String; }
+		template<> constexpr MemberFieldType GetMemberType<Object*>() { return MemberFieldType::ObjectPtr; }
+
+		template<typename M> StructID GetArraySizeOrStructID()
+		{
+			StructID struct_id_or_array_size = kWrongID;
+			const constexpr MemberFieldType member_field_type = GetMemberType<M>();
+			if constexpr(MemberFieldType::Struct == member_field_type
+				|| MemberFieldType::ObjectPtr == member_field_type)
+			{
+				struct_id_or_array_size = std::remove_pointer<M>::type::StaticGetReflectionStructureID();
+			}
+			else if constexpr(MemberFieldType::Array == member_field_type)
+			{
+				struct_id_or_array_size = array_length<M>::value;
+			}
+			return struct_id_or_array_size;
+		}
+
+		template<typename V> void CreateVectorHandlerProperty(Structure& structure)
+		{
+			static_assert(sizeof(VectorHandler<V>) <= 8);
+			structure.properties_.emplace_back(Property(VectorHandler<V>::CreateHandler));
+		}
+
+		template<typename M> void CreateMapHandlerProperty(Structure& structure)
+		{
+			static_assert(sizeof(MapHandler<M>) <= 8);
+			structure.properties_.emplace_back(Property(MapHandler<M>::CreateHandler));
+		}
+
+		template<typename M> void CreateSubTypePropertyOptional(Structure& structure, PropertyID property_id)
+		{
+			const constexpr MemberFieldType member_field_type = GetMemberType<M>();
+			if constexpr(member_field_type == MemberFieldType::Array)
+			{
+				CreateSubTypeProperty<array_element<M>::type>(structure, property_id);
+			}
+			else if constexpr(member_field_type == MemberFieldType::Vector)
+			{
+				CreateVectorHandlerProperty<M>(structure);
+				CreateSubTypeProperty<M::value_type>(structure, property_id);
+			}
+			else if constexpr(member_field_type == MemberFieldType::Map)
+			{
+				CreateMapHandlerProperty<M>(structure);
+				CreateSubTypeProperty<M::key_type>(structure, property_id);
+				CreateSubTypeProperty<M::mapped_type>(structure, property_id);
+			}
+			else
+			{
+				UNREFERENCED_PARAMETER(structure);
+				UNREFERENCED_PARAMETER(property_id);
+			}
+		}
+
+		template<typename MOrg> void CreateSubTypeProperty(Structure& structure, PropertyID property_id)
+		{
+			using M = std::remove_cv<MOrg>::type;
+			structure.properties_.emplace_back(Property(GetMemberType<M>(), property_id, GetArraySizeOrStructID<M>()));
+			CreateSubTypePropertyOptional<M>(structure, property_id);
+		}
+
+		template<typename MOrg> void CreateProperty(Structure& structure, const char* name, uint16 offset, uint8 flags)
+		{
+			using M = std::remove_cv<MOrg>::type;
+			const PropertyID property_id = HashString32(name);
+			Property p(offset, GetMemberType<M>()
+				, std::is_const<M>::value ? ConstSpecifier::Const : ConstSpecifier::NotConst
+				, AccessSpecifier::Public, property_id, flags, GetArraySizeOrStructID<M>());
+			DEBUG_ONLY(p.name_ = name);
+			structure.properties_.emplace_back(p);
+
+			CreateSubTypePropertyOptional<M>(structure, property_id);
 		}
 	};
-
-	template<typename T> struct is_vector : public std::false_type {};
-	template<typename T, typename A> struct is_vector<std::vector<T, A>> : public std::true_type {};
-
-	template<typename T> struct is_map : public std::false_type {};
-	template<typename K, typename T, typename P, typename A> struct is_map<std::map<K, T, P, A>> : public std::true_type {};
-
-	template<typename T> struct is_std_array : public std::false_type {};
-	template < class T, size_t N > struct is_std_array<std::array<T, N>> : public std::true_type {};
-
-	template<class T> struct array_element {};
-	template<class T, size_t N> struct array_element<T[N]> { using type = T; };
-	template<class T, size_t N> struct array_element<std::array<T, N>> { using type = T; };
-
-	template<class T> struct array_length {};
-	template<class T, size_t N> struct array_length<T[N]> { static constexpr size_t value = N; };
-	template<class T, size_t N> struct array_length<std::array<T, N>> { static constexpr size_t value = N; };
-
-	template<typename M> constexpr MemberFieldType GetMemberType()
-	{
-		static_assert(std::is_class<M>::value || std::is_array<M>::value, "Unknown type!");
-
-		if constexpr(std::is_array<M>::value || is_std_array<M>::value)
-			return MemberFieldType::Array;
-		if constexpr(is_vector<M>::value)
-			return MemberFieldType::Container;
-		if constexpr (is_map<M>::value)
-			return MemberFieldType::Map;
-
-		return MemberFieldType::Struct;
-	}
-	template<> constexpr MemberFieldType GetMemberType<int8>()			{ return MemberFieldType::Int8; }
-	template<> constexpr MemberFieldType GetMemberType<uint8>()			{ return MemberFieldType::UInt8; }
-	template<> constexpr MemberFieldType GetMemberType<int16>()			{ return MemberFieldType::Int16; }
-	template<> constexpr MemberFieldType GetMemberType<uint16>()		{ return MemberFieldType::UInt16; }
-	template<> constexpr MemberFieldType GetMemberType<int32>()			{ return MemberFieldType::Int32; }
-	template<> constexpr MemberFieldType GetMemberType<uint32>()		{ return MemberFieldType::UInt32; }
-	template<> constexpr MemberFieldType GetMemberType<int64>()			{ return MemberFieldType::Int64; }
-	template<> constexpr MemberFieldType GetMemberType<uint64>()		{ return MemberFieldType::UInt64; }
-	template<> constexpr MemberFieldType GetMemberType<float>()			{ return MemberFieldType::Float; }
-	template<> constexpr MemberFieldType GetMemberType<double>()		{ return MemberFieldType::Double; }
-	template<> constexpr MemberFieldType GetMemberType<std::string>()	{ return MemberFieldType::String; }
-	template<> constexpr MemberFieldType GetMemberType<Object*>()		{ return MemberFieldType::ObjectPtr; }
-
-	template<typename M> void CreateSubTypeProperty(Structure& structure, PropertyID property_id, uint8 optional_array_size = 0)
-	{
-		using M_not_const = std::remove_cv<M>::type;
-		const constexpr MemberFieldType member_field_type = GetMemberType<M_not_const>();
-		StructID struct_id = kWrongID;
-		if constexpr(MemberFieldType::Struct == member_field_type || MemberFieldType::ObjectPtr == member_field_type)
-		{
-			struct_id = std::remove_pointer<M_not_const>::type::StaticGetReflectionStructureID();
-		}
-
-		structure.properties_.emplace_back(Property(member_field_type, property_id, struct_id, optional_array_size));
-
-		if constexpr(member_field_type == MemberFieldType::Array)
-		{
-			CreateSubTypeProperty<array_element<M_not_const>::type>(structure, property_id, array_length<M_not_const>::value);
-		}
-		else if constexpr(member_field_type == MemberFieldType::Container)
-		{
-			CreateSubTypeProperty<M_not_const::value_type>(structure, property_id);
-		}
-		else if constexpr(member_field_type == MemberFieldType::Map)
-		{
-			CreateSubTypeProperty<M_not_const::key_type>(structure, property_id);
-			CreateSubTypeProperty<M_not_const::mapped_type>(structure, property_id);
-		}
-	}
-	template<typename M> void CreateProperty(Structure& structure, const char* name, uint16 offset)
-	{
-		using M_not_const = std::remove_cv<M>::type;
-		const constexpr MemberFieldType member_field_type = GetMemberType<M_not_const>();
-		StructID struct_id = kWrongID;
-		if constexpr(MemberFieldType::Struct == member_field_type || MemberFieldType::ObjectPtr == member_field_type)
-		{
-			struct_id = std::remove_pointer<M_not_const>::type::StaticGetReflectionStructureID();
-		}
-
-		const PropertyID property_id = HashString32(name);
-		Property p(offset
-			, member_field_type
-			, std::is_const<M>::value ? Reflection::ConstSpecifier::Const : Reflection::ConstSpecifier::NotConst
-			, Reflection::AccessSpecifier::Public
-			, property_id
-			, struct_id);
-		DEBUG_ONLY(p.name_ = name);
-		structure.properties_.emplace_back(p);
-
-		if constexpr(member_field_type == MemberFieldType::Array)
-		{
-			CreateSubTypeProperty<array_element<M_not_const>::type>(structure, property_id, array_length<M_not_const>::value);
-		}
-		else if constexpr(member_field_type == MemberFieldType::Container)
-		{
-			CreateSubTypeProperty<M_not_const::value_type>(structure, property_id);
-		}
-		else if constexpr(member_field_type == MemberFieldType::Map)
-		{
-			CreateSubTypeProperty<M_not_const::key_type>(structure, property_id);
-			CreateSubTypeProperty<M_not_const::mapped_type>(structure, property_id);
-		}
-	}
 }
 
-#define IMPLEMENT_VIRTUAL_REFLECTION(struct_name) static Reflection::StructID StaticGetReflectionStructureID() \
-	{ return Reflection::HashString32(#struct_name); } \
-	Reflection::StructID GetReflectionStructureID() const override \
+#define IMPLEMENT_VIRTUAL_REFLECTION(name) static reflection::StructID StaticGetReflectionStructureID() \
+	{ return reflection::details::HashString32(#name); } \
+	reflection::StructID GetReflectionStructureID() const override \
 	{ return StaticGetReflectionStructureID(); }
 
-#define IMPLEMENT_STATIC_REFLECTION(struct_name) static Reflection::StructID StaticGetReflectionStructureID() \
-	{ return Reflection::HashString32(#struct_name); } \
-	static const Reflection::Structure& StaticGetReflectionStructure() \
-	{ return Reflection::Structure::GetStructure(StaticGetReflectionStructureID()); }
+#define IMPLEMENT_STATIC_REFLECTION(name) static reflection::StructID StaticGetReflectionStructureID() \
+	{ return reflection::details::HashString32(#name); } \
+	static const reflection::Structure& StaticGetReflectionStructure() \
+	{ return reflection::Structure::GetStructure(StaticGetReflectionStructureID()); }
 
-#define REGISTER_STRUCTURE(struct_name) Reflection::RegisterStruct<struct_name> UNIQUE_NAME(RegisterStruct) DEBUG_ONLY((#struct_name));
+#define REGISTER_STRUCTURE(name) reflection::details::RegisterStruct<name> UNIQUE_NAME(RegisterStruct) \
+	DEBUG_ONLY((#name));
 
-#define DEFINE_PROPERTY(struct_name, field_name) Reflection::CreateProperty<decltype(field_name)>(structure, #field_name, offsetof(struct_name, field_name))
+#define DEFINE_PROPERTY(struct_name, field_name) reflection::details::CreateProperty<decltype(field_name)>(structure, \
+	#field_name, offsetof(struct_name, field_name), 0)

@@ -21,7 +21,7 @@
     <ClInclude Include="utils.h">
       <Filter>Utils</Filter>
     </ClInclude>
-    <ClInclude Include="Serialization.h">
+    <ClInclude Include="data_template.h">
       <Filter>Serialization</Filter>
     </ClInclude>
   </ItemGroup>
@@ -29,6 +29,9 @@
     <ClCompile Include="main.cpp" />
     <ClCompile Include="reflection.cpp">
       <Filter>Reflection</Filter>
+    </ClCompile>
+    <ClCompile Include="data_template.cpp">
+      <Filter>Serialization</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

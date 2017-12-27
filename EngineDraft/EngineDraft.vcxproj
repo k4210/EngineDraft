@@ -117,11 +117,12 @@
   <ItemGroup>
     <ClCompile Include="main.cpp" />
     <ClCompile Include="reflection.cpp" />
+    <ClCompile Include="data_template.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="basic_types.h" />
     <ClInclude Include="reflection.h" />
-    <ClInclude Include="Serialization.h" />
+    <ClInclude Include="data_template.h" />
     <ClInclude Include="utils.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
