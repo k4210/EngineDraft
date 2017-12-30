@@ -1,8 +1,18 @@
 #pragma once
 #include <assert.h>
+#include <type_traits>
+#include <vector>
+#include <map>
 #include "basic_types.h"
 
 // Code format: max line length - 110, max function len - 
+#define EDITOR 1
+
+#if EDITOR
+#define EDITOR_ONLY(x) x
+#else
+#define EDITOR_ONLY(x)
+#endif
 
 #define DEBUG_ONLY(x) x
 #define Assert assert
@@ -24,14 +34,25 @@ struct Flag32
 private:
 	uint32 data = 0;
 
+	void EnsureSeparable(uint32 a, uint32 b)
+	{
+		Assert(0 == (a & b));
+	}
+
 public:
 	bool Get(E v) const
 	{
 		return 0 != (data & static_cast<uint32>(v));
 	}
 
+	bool operator[](E v) const
+	{
+		return Get(v);
+	}
+
 	void Add(E v)
 	{
+		EnsureSeparable(data, static_cast<uint32>(v));
 		data |= static_cast<uint32>(v);
 	}
 
@@ -78,6 +99,22 @@ public:
 
 template<typename E>
 inline Flag32<E> operator|(E a, E b) { return Flag32<E>(a, b); }
+
+constexpr uint32 HashString32(const char* const str, const uint32 value = 0x811c9dc5) noexcept
+{
+	return (str[0] == '\0') ? value : HashString32(&str[1], (value ^ uint32(str[0])) * 0x1000193);
+}
+
+constexpr uint64 HashString64(const char* const str)
+{
+	uint64 hash = 0xcbf29ce484222325;
+	const uint64 prime = 0x100000001b3;
+	for (const char* it = str; *it != '\0'; it++)
+	{
+		hash = (hash ^ uint64(*it)) * prime;
+	}
+	return hash;
+}
 
 //Type Detection templates
 template<typename T> struct is_vector : public std::false_type {};

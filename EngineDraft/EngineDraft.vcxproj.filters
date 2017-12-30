@@ -24,6 +24,9 @@
     <ClInclude Include="data_template.h">
       <Filter>Serialization</Filter>
     </ClInclude>
+    <ClInclude Include="data_storage.h">
+      <Filter>Serialization</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />

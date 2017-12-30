@@ -87,12 +87,39 @@ namespace reflection
 		return true;
 	}
 
-	template<typename T> const char* ToStr(T e)
+	std::string Property::ToString() const
 	{
-		static_assert(false, "unknown type");
+		std::stringstream str;
+		str << std::left << std::setfill(' ') << std::setw(6) << ToStr(GetPropertyUsage()) << ' ';
+		if (EPropertyUsage::Handler != GetPropertyUsage())
+		{
+			DEBUG_ONLY(str << std::left << std::setfill(' ') << std::setw(16) << name_ << ' ');
+			str << std::left << std::setfill(' ') << std::setw(8) << ToStr(GetFieldType()) << ' ';
+			str << std::right << std::setfill('0') << std::setw(8) << std::hex << GetPropertyID() << ' ';
+
+			if (HasStructID())
+				str << std::setfill('0') << std::setw(8) << std::hex << GetOptionalStructID() << "  ";
+			else
+				str << "          ";
+
+			if (GetFieldType() == MemberFieldType::Array)
+				str << std::setfill('0') << std::setw(4) << GetArraySize() << ' ';
+			else
+				str << "     ";
+
+			if (EPropertyUsage::Main == GetPropertyUsage())
+			{
+				str << std::left << std::setfill(' ') << std::setw(8) << ToStr(GetAccessSpecifier()) << ' ';
+				str << std::left << std::setfill(' ') << std::setw(8) << ToStr(GetConstSpecifier()) << ' ';
+				str << std::right << std::setfill('0') << std::setw(8) << std::hex << GetFieldOffset() << ' ';
+				str << std::right << std::setfill('0') << std::setw(2) << std::hex << static_cast<uint32>(GetFlags());
+			}
+		}
+		str << '\n';
+		return str.str();
 	}
 
-	template<> const char* ToStr<MemberFieldType>(MemberFieldType e)
+	const char* ToStr(MemberFieldType e)
 	{
 		switch (e)
 		{
@@ -116,7 +143,7 @@ namespace reflection
 		return "error";
 	}
 
-	template<> const char* ToStr<AccessSpecifier>(AccessSpecifier e)
+	const char* ToStr(AccessSpecifier e)
 	{
 		switch (e)
 		{
@@ -127,7 +154,7 @@ namespace reflection
 		return "error";
 	}
 
-	template<> const char* ToStr<ConstSpecifier>(ConstSpecifier e)
+	const char* ToStr(ConstSpecifier e)
 	{
 		switch (e)
 		{
@@ -137,46 +164,14 @@ namespace reflection
 		return "error";
 	}
 
-	template<> const char* ToStr<EPropertyUsage>(EPropertyUsage e)
+	const char* ToStr(EPropertyUsage e)
 	{
 		switch (e)
 		{
-		case EPropertyUsage::Main: return "Main";
-		case EPropertyUsage::SubType: return "Sub";
-		case EPropertyUsage::Handler: return "Hdlr";
+			case EPropertyUsage::Main: return "Main";
+			case EPropertyUsage::SubType: return "Sub";
+			case EPropertyUsage::Handler: return "Hdlr";
 		}
 		return "error";
-	}
-
-	std::string Property::ToString() const
-	{
-		std::stringstream str;
-		str << std::left << std::setfill(' ') << std::setw(6) << ToStr(GetPropertyUsage()) << ' ';
-		if (EPropertyUsage::Handler != GetPropertyUsage())
-		{
-			DEBUG_ONLY(str << std::left << std::setfill(' ') << std::setw(16) << name_ << ' ');
-			str << std::left << std::setfill(' ') << std::setw(8) << ToStr(GetFieldType()) << ' ';
-			str << std::right << std::setfill('0') << std::setw(8) << std::hex << GetPropertyID() << ' ';
-
-			if (MemberFieldType::Struct == GetFieldType()|| MemberFieldType::ObjectPtr == GetFieldType())
-				str << std::setfill('0') << std::setw(8) << std::hex << GetOptionalStructID() << "  ";
-			else
-				str << "          ";
-
-			if (GetFieldType() == MemberFieldType::Array)
-				str << std::setfill('0') << std::setw(4) << GetArraySize() << ' ';
-			else
-				str << "     ";
-
-			if (EPropertyUsage::Main == GetPropertyUsage())
-			{
-				str << std::left << std::setfill(' ') << std::setw(8) << ToStr(GetAccessSpecifier()) << ' ';
-				str << std::left << std::setfill(' ') << std::setw(8) << ToStr(GetConstSpecifier()) << ' ';
-				str << std::right << std::setfill('0') << std::setw(8) << std::hex << GetFieldOffset() << ' ';
-				str << std::right << std::setfill('0') << std::setw(2) << std::hex << static_cast<uint32>(GetFlags());
-			}
-		}
-		str << '\n';
-		return str.str();
 	}
 }
