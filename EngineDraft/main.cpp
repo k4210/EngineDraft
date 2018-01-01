@@ -83,6 +83,30 @@ public:
 };
 REGISTER_STRUCTURE(ObjSample);
 
+class ObjAdvanced : public ObjSample
+{
+public:
+	std::string adv_string_ = "yay";
+
+	ObjAdvanced() = default;
+
+	IMPLEMENT_VIRTUAL_REFLECTION(ObjAdvanced);
+
+	static reflection::Structure& StaticRegisterStructure()
+	{
+		auto& structure = reflection::Structure::CreateStructure(StaticGetReflectionStructureID());
+		structure.super_id_ = reflection::Object::StaticGetReflectionStructureID();
+		structure.size_ = sizeof(ObjAdvanced);
+		structure.super_id_ = ObjSample::StaticGetReflectionStructureID();
+		structure.get_obj_id = GetObjectID_Stub;
+		structure.obj_from_id = GetObjectFromID_Stub;
+		DEFINE_PROPERTY(ObjAdvanced, adv_string_);
+		Assert(structure.Validate());
+		return structure;
+	}
+};
+REGISTER_STRUCTURE(ObjAdvanced);
+
 void PrintDataTemplate(const serialization::DataTemplate& dt)
 {
 	rapidjson::StringBuffer sb;
@@ -95,9 +119,19 @@ void PrintDataTemplate(const serialization::DataTemplate& dt)
 	std::cout << "\n";
 }
 
-void PrintStructure(const reflection::Structure& structure)
+void PrintStructure(const reflection::Structure& structure, bool print_label)
 {
-	std::cout << "no   use    name             type     prop_id  struct_id num  access   const    offset   flags\n";
+	if (print_label)
+	{
+		std::cout << "no   use    name             type     prop_id  struct_id num  access   const    offset   flags\n";
+	}
+
+	auto* super_struct = structure.TryGetSuperStructure();
+	if (super_struct)
+	{
+		PrintStructure(*super_struct, false);
+	}
+
 	uint32 i = 0;
 	for (auto& p : structure.properties_)
 	{
@@ -105,7 +139,10 @@ void PrintStructure(const reflection::Structure& structure)
 		std::cout << p.ToString();
 		i++;
 	}
-	std::cout << "\n";
+	if (print_label)
+	{
+		std::cout << "\n";
+	}
 }
 
 int main()
@@ -116,8 +153,8 @@ int main()
 	{
 		serialization::DataTemplate data_template;
 		{
-			ObjSample obj;
-			PrintStructure(reflection::Structure::GetStructure(obj.GetReflectionStructureID()));
+			ObjAdvanced obj;
+			PrintStructure(reflection::Structure::GetStructure(obj.GetReflectionStructureID()), true);
 			obj.vec_.emplace_back(StructSample(3));
 			obj.vec_.emplace_back(StructSample());
 			obj.arr1_[2].integer_ = 9;
@@ -130,13 +167,12 @@ int main()
 			PrintDataTemplate(data_template);
 		}
 
-		ObjSample obj_clone;
+		ObjAdvanced obj_clone;
 		data_template.Load(&obj_clone);
 
 		serialization::DataTemplate data_template_clone;
 		data_template_clone.Save(&obj_clone, serialization::SaveFlags::SaveNativeDefaultValues);
 		PrintDataTemplate(data_template_clone);
-
 	}
 	std::cout.rdbuf(coutbuf); //reset to standard output again
 

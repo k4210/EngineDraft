@@ -126,12 +126,28 @@ namespace
 	}
 };
 
+#pragma region SAVE
 bool serialization::DataTemplate::SaveStructure(const Structure & structure
 	, const uint8 * const src
 	, const uint32 nest_level
 	, const Flag32<SaveFlags> flags)
 {
 	bool was_saved = false;
+	if (structure.super_id_ != kWrongID)
+	{
+		tags_.emplace_back(Tag(
+#if EDITOR
+			kWrongID,
+#endif		
+			kSuperStructPropertyIndex, data_.size(), nest_level, 0, 0));
+		was_saved = SaveStructure(Structure::GetStructure(structure.super_id_), src, nest_level + 1, flags);
+
+		if (!was_saved)
+		{
+			tags_.pop_back();
+		}
+	}
+
 	for (uint32 property_index = 0; property_index < structure.properties_.size(); 
 		property_index = NextPropertyIndexOnThisLevel(structure.properties_, property_index))
 	{
@@ -259,6 +275,9 @@ void serialization::DataTemplate::Save(const Object * obj, const Flag32<SaveFlag
 	Assert(tags_.empty() == data_.empty());
 }
 
+#pragma endregion
+
+#pragma region LOAD
 uint32 serialization::DataTemplate::LoadArray(const Structure& structure, uint8* dst, const Tag tag, uint32 tag_index) const
 {
 	const auto& property = structure.properties_[tag.property_index_];
@@ -373,8 +392,16 @@ uint32 serialization::DataTemplate::LoadStructure(const Structure& structure, ui
 			Assert(tag.nest_level_ <= first_tag.nest_level_);
 			if (tag.nest_level_ != first_tag.nest_level_ || tag.element_index_ != first_tag.element_index_ || tag.is_key_ != first_tag.is_key_)
 				break;
-			const auto& property = structure.properties_[tag.property_index_];
-			tag_index = LoadValue(structure, dst + property.GetFieldOffset(), tag_index);
+			if (kSuperStructPropertyIndex == tag.property_index_)
+			{
+				tag_index++;
+				tag_index = LoadStructure(Structure::GetStructure(structure.super_id_), dst, tag_index);
+			}
+			else
+			{
+				const auto& property = structure.properties_[tag.property_index_];
+				tag_index = LoadValue(structure, dst + property.GetFieldOffset(), tag_index);
+			}
 		}
 	}
 	return tag_index;
@@ -384,10 +411,19 @@ void serialization::DataTemplate::Load(Object* obj) const
 {
 	Assert(nullptr != obj);
 	Assert(kWrongID != structure_id_);
-	Assert(obj->GetReflectionStructureID() == structure_id_);
+	Assert(obj->GetReflectionStructureID() == structure_id_); // based on
 	const auto& structure = Structure::GetStructure(structure_id_);
 	Assert(structure.RepresentsObjectClass());
 	LoadStructure(structure, reinterpret_cast<uint8*>(obj), 0);
+}
+
+#pragma endregion
+
+void serialization::DataTemplate::RefreshAfterLayoutChanged()
+{
+	Assert(kWrongID != structure_id_);
+	const auto& structure = Structure::GetStructure(structure_id_);
+	Assert(structure.RepresentsObjectClass());
 }
 
 void serialization::DataTemplate::CloneFrom(const DataTemplate& src)

@@ -249,10 +249,18 @@ namespace reflection
 	public:
 		static Structure& CreateStructure(const StructID id);
 		static const Structure& GetStructure(const StructID id);
+		static const Structure* TryGetStructure(const StructID id);
+
+		const Structure* TryGetSuperStructure() const
+		{
+			return (kWrongID == super_id_) ? nullptr : TryGetStructure(super_id_);
+		}
+
 		bool RepresentsObjectClass() const
 		{
 			return nullptr != get_obj_id && nullptr != obj_from_id && kWrongID != super_id_;
 		}
+
 		bool RepresentNonObjectStructure() const
 		{
 			return nullptr == get_obj_id 
@@ -260,6 +268,7 @@ namespace reflection
 				&& kWrongID == super_id_
 				&& !properties_.empty();
 		}
+
 		bool Validate() const;
 	};
 

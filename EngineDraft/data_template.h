@@ -6,6 +6,7 @@ namespace serialization
 {
 	using namespace reflection;
 
+	constexpr uint32 kSuperStructPropertyIndex = 0xFF;
 	struct Tag
 	{
 		EDITOR_ONLY(PropertyID property_id_ = kWrongID);
@@ -30,6 +31,7 @@ namespace serialization
 			, nest_level_(nest_level), element_index_(element_index), is_key_(is_key)
 		{
 			Assert(FitsInBits(property_index, 8));
+			Assert((property_id == kWrongID) == (property_index == kSuperStructPropertyIndex));
 			Assert(FitsInBits(byte_offset, 12));
 			Assert(FitsInBits(nest_level, 4));
 			Assert(FitsInBits(element_index, 7));
@@ -56,7 +58,7 @@ namespace serialization
 		void Merge(const DataTemplate& higher_dt); // Add higher_dt
 
 #if EDITOR
-		void RefreshAfterLayoutChanged() {}
+		void RefreshAfterLayoutChanged();
 #endif
 
 	private:

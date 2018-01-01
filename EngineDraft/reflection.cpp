@@ -16,10 +16,17 @@ namespace reflection
 			return instance;
 		}
 
-		Structure& GetStructure(StructID id)
+		Structure* TryGetStructure(const StructID id) 
 		{
-			Assert(structures_.find(id) != structures_.end());
-			return *structures_.at(id);
+			auto iter = structures_.find(id);
+			return (structures_.end() == iter) ? nullptr : iter->second.get();
+		}
+
+		Structure& GetStructure(const StructID id) 
+		{
+			Structure* struct_ptr = TryGetStructure(id);
+			Assert(struct_ptr);
+			return *struct_ptr;
 		}
 
 		Structure& RegisterStructure(Structure* struct_ptr)
@@ -42,6 +49,11 @@ namespace reflection
 	const Structure& Structure::GetStructure(const StructID id)
 	{
 		return ReflectionManager::Get().GetStructure(id);
+	}
+
+	const Structure* Structure::TryGetStructure(const StructID id)
+	{
+		return ReflectionManager::Get().TryGetStructure(id);
 	}
 
 	uint32 NextPropertyIndexOnThisLevel(const std::vector<Property>& properties, uint32 idx)

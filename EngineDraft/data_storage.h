@@ -41,11 +41,27 @@ namespace serialization
 		template <typename Writer> uint32 SaveMap(Writer& writer, const Structure& structure, const DataTemplate& data_template, uint32 tag_index);
 
 		template <typename Writer> void SaveObj(Writer& writer, const uint8* const data, const uint32 offset);
+		template <typename Writer> void SaveTagSuperStruct(Writer& writer, const Tag tag);
 	public:
 		template <typename Writer> void Save(Writer& writer, const DataTemplate& data_template);
 
 		virtual ~JsonDataStorage() = default;
 	};
+
+	template <typename Writer> void JsonDataStorage::SaveTagSuperStruct(Writer& writer, const Tag tag)
+	{
+		Assert(tag.property_index_ == kSuperStructPropertyIndex);
+		Assert(tag.byte_offset_ == 0);
+		writer.Key("tag");
+		std::stringstream str;
+		str << "property_id: " << "super-struct"
+			<< " property_name: '" << "super-struct"
+			<< "' property_type: " << "Struct"
+			<< " nest_level: " << tag.nest_level_
+			<< " element_index: " << tag.element_index_
+			<< " is_key: " << tag.is_key_;
+		writer.String(str.str());
+	}
 
 	template <typename Writer> void JsonDataStorage::SaveTag(Writer& writer, const Tag tag, const Property& property)
 	{
@@ -215,7 +231,16 @@ namespace serialization
 				Assert(tag.nest_level_ <= first_tag.nest_level_);
 				if (tag.nest_level_ != first_tag.nest_level_ || tag.element_index_ != first_tag.element_index_ || tag.is_key_ != first_tag.is_key_)
 					break;
-				tag_index = SaveValue<Writer>(writer, structure, data_template, tag_index);
+				if (kSuperStructPropertyIndex == tag.property_index_)
+				{
+					tag_index++;
+					SaveTagSuperStruct<Writer>(writer, tag);
+					tag_index = SaveStruct<Writer>(writer, Structure::GetStructure(structure.super_id_), data_template, tag_index);
+				}
+				else
+				{
+					tag_index = SaveValue<Writer>(writer, structure, data_template, tag_index);
+				}
 			}
 		}
 		//writer.EndObject();
