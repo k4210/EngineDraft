@@ -41,9 +41,9 @@ namespace reflection
 		}
 	};
 
-	Structure& Structure::CreateStructure(const StructID id)
+	Structure& Structure::CreateStructure(const StructID id, const uint32 size, const StructID super_id)
 	{
-		return ReflectionManager::Get().RegisterStructure(new Structure(id));
+		return ReflectionManager::Get().RegisterStructure(new Structure(id, size, super_id));
 	}
 
 	const Structure& Structure::GetStructure(const StructID id)
@@ -54,24 +54,6 @@ namespace reflection
 	const Structure* Structure::TryGetStructure(const StructID id)
 	{
 		return ReflectionManager::Get().TryGetStructure(id);
-	}
-
-	uint32 NextPropertyIndexOnThisLevel(const std::vector<Property>& properties, uint32 idx)
-	{
-		uint32 properties_to_consume = 1;
-		while (properties_to_consume)
-		{
-			properties_to_consume--;
-			const auto& prop = properties[idx];
-			switch (prop.GetFieldType())
-			{
-			case MemberFieldType::Array:			properties_to_consume += 1; break;
-			case MemberFieldType::Vector:	idx++;	properties_to_consume += 1; break;
-			case MemberFieldType::Map:		idx++;	properties_to_consume += 2; break;
-			}
-			idx++;
-		}
-		return idx;
 	}
 
 	bool Structure::Validate() const
@@ -90,11 +72,11 @@ namespace reflection
 				if (!proper_order) 
 					return false;
 
-				if(property_idx != NextPropertyIndexOnThisLevel(properties_, prev_index))
+				if(property_idx != NextPropertyIndexOnThisLevel(prev_index))
 					return false;
 
 				prev_index = property_idx;
-		}
+			}
 		}
 		return true;
 	}

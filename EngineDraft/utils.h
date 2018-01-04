@@ -3,7 +3,9 @@
 #include <type_traits>
 #include <vector>
 #include <map>
+#include <iostream>
 #include "basic_types.h"
+
 
 // Code format: max line length - 110, max function len - 
 #define EDITOR 1
@@ -139,4 +141,9 @@ constexpr bool FitsInBits(const uint32 value, const uint32 num_bits)
 {
 	const uint32 mask = ~(0xFFFFFFFF << num_bits);
 	return value == (mask & value);
+}
+
+inline std::ostream& ErrorStream()
+{
+	return std::cout;
 }

@@ -50,16 +50,16 @@ namespace serialization
 
 	template <typename Writer> void JsonDataStorage::SaveTagSuperStruct(Writer& writer, const Tag tag)
 	{
-		Assert(tag.property_index_ == kSuperStructPropertyIndex);
-		Assert(tag.byte_offset_ == 0);
+		Assert(tag.GetPropertyIndex() == kSuperStructPropertyIndex);
+		Assert(tag.GetDataOffset() == 0);
 		writer.Key("tag");
 		std::stringstream str;
 		str << "property_id: " << "super-struct"
 			<< " property_name: '" << "super-struct"
 			<< "' property_type: " << "Struct"
-			<< " nest_level: " << tag.nest_level_
-			<< " element_index: " << tag.element_index_
-			<< " is_key: " << tag.is_key_;
+			<< " nest_level: " << tag.GetNestLevel()
+			<< " element_index: " << tag.GetElementIndex()
+			<< " is_key: " << tag.IsKey();
 		writer.String(str.str());
 	}
 
@@ -72,9 +72,9 @@ namespace serialization
 		str << "property_id: " << property.GetPropertyID()
 			<< " property_name: '" << property.GetName()
 			<< "' property_type: " << ToStr(property.GetFieldType())
-			<< " nest_level: " << tag.nest_level_
-			<< " element_index: " << tag.element_index_
-			<< " is_key: "<< tag.is_key_;
+			<< " nest_level: " << tag.GetNestLevel()
+			<< " element_index: " << tag.GetElementIndex()
+			<< " is_key: "<< tag.IsKey();
 		writer.String(str.str());
 
 		/*
@@ -89,13 +89,13 @@ namespace serialization
 		writer.String(type_str, strlen(type_str));
 
 		writer.Key("nest_level");
-		writer.Uint(tag.nest_level_);
+		writer.Uint(tag.GetNestLevel());
 
 		writer.Key("element_index");
-		writer.Uint(tag.element_index_);
+		writer.Uint(tag..GetElementIndex());
 
 		writer.Key("is_key");
-		writer.Uint(tag.is_key_);
+		writer.Uint(tag.IsKey());
 		*/
 	}
 
@@ -112,45 +112,40 @@ namespace serialization
 
 	template <typename Writer> uint32 JsonDataStorage::SaveMany(Writer& writer, const Structure& structure, const DataTemplate& data_template, uint32 tag_index)
 	{
-		//const IncreaseIndentOnScope<Writer> intend(writer);
-
 		const Tag tag = data_template.tags_[tag_index - 1];
-		const auto& upper_property = structure.properties_[tag.property_index_];
+		const auto& upper_property = structure.GetProperty(tag.GetPropertyIndex());
 		Assert(upper_property.GetFieldType() == MemberFieldType::Array || upper_property.GetFieldType() == MemberFieldType::Vector);
 		if (upper_property.GetFieldType() == MemberFieldType::Vector)
 		{
 			writer.Key("length");
-			writer.Uint(GetConstRef<uint16>(data_template.data_.data(), tag.byte_offset_));
+			writer.Uint(GetConstRef<uint16>(data_template.data_.data(), tag.GetDataOffset()));
 		}
 
-		const uint32 inner_property_index = tag.property_index_ + ((upper_property.GetFieldType() == MemberFieldType::Array) ? 1 : 2);
+		const uint32 inner_property_index = structure.GetSubPropertyIndex(tag.GetPropertyIndex()
+			, (upper_property.GetFieldType() == MemberFieldType::Array) ? ESubType::Array_Element : ESubType::Vector_Element);
 		while (tag_index < data_template.tags_.size())
 		{
 			const Tag inner_tag = data_template.tags_[tag_index];
 			if (upper_property.GetFieldType() == MemberFieldType::Array)
 			{
-				Assert(inner_tag.element_index_ < upper_property.GetArraySize());
+				Assert(inner_tag.GetElementIndex() < upper_property.GetArraySize());
 			}
-			const bool expected_property_idx = inner_tag.property_index_ == inner_property_index;//error
-			const bool expected_nest_idx = inner_tag.nest_level_ == tag.nest_level_ + 1;
+			const bool expected_property_idx = inner_tag.GetPropertyIndex() == inner_property_index;//error
+			const bool expected_nest_idx = inner_tag.GetNestLevel() == tag.GetNestLevel() + 1;
 			Assert(expected_property_idx == expected_nest_idx);
 			if (!expected_property_idx || !expected_nest_idx)
 				break;
 			tag_index = SaveValue<Writer>(writer, structure, data_template, tag_index);
 		}
-		//writer.EndArray();
 		return tag_index;
 	}
 
 	template <typename Writer> uint32 JsonDataStorage::SaveMap(Writer& writer, const Structure& structure, const DataTemplate& data_template, uint32 tag_index)
 	{
-		//const IncreaseIndentOnScope<Writer> intend(writer);
-
 		const Tag tag = data_template.tags_[tag_index - 1];
-		//const auto& handler = structure.properties_[tag.property_index_ + 1].GetMapHandler();
-		const uint32 key_property_index = tag.property_index_ + 2;
-		const uint32 value_property_index = NextPropertyIndexOnThisLevel(structure.properties_, key_property_index);
-		const uint32 map_size = GetConstRef<uint16>(data_template.data_.data(), tag.byte_offset_); //number of keys
+		const uint32 key_property_index = structure.GetSubPropertyIndex(tag.GetPropertyIndex(), ESubType::Key);
+		const uint32 value_property_index = structure.GetSubPropertyIndex(tag.GetPropertyIndex(), ESubType::Map_Value);
+		const uint32 map_size = GetConstRef<uint16>(data_template.data_.data(), tag.GetDataOffset()); //number of keys
 
 		writer.Key("length");
 		writer.Uint(map_size);
@@ -158,11 +153,11 @@ namespace serialization
 		while (tag_index < data_template.tags_.size())
 		{
 			const Tag inner_tag = data_template.tags_[tag_index];
-			if (inner_tag.nest_level_ != tag.nest_level_ + 1)
+			if (inner_tag.GetNestLevel() != tag.GetNestLevel() + 1)
 				break;
-			Assert(inner_tag.element_index_ < map_size);
-			Assert(!!inner_tag.is_key_ == (inner_tag.property_index_ == key_property_index));
-			Assert(!!inner_tag.is_key_ != (inner_tag.property_index_ == value_property_index));
+			Assert(inner_tag.GetElementIndex() < map_size);
+			Assert(!!inner_tag.IsKey() == (inner_tag.GetPropertyIndex() == key_property_index));
+			Assert(!!inner_tag.IsKey() != (inner_tag.GetPropertyIndex() == value_property_index));
 			tag_index = SaveValue<Writer>(writer, structure, data_template, tag_index);
 		}
 		return tag_index;
@@ -180,10 +175,9 @@ namespace serialization
 	{
 		const IncreaseIndentOnScope<Writer> intend(writer);
 
-		//writer.StartObject();
 		const Tag tag = data_template.tags_[tag_index];
 		tag_index++;
-		const auto& property = structure.properties_[tag.property_index_];
+		const auto& property = structure.GetProperty(tag.GetPropertyIndex());
 		SaveTag<Writer>(writer, tag, property);
 
 		switch (property.GetFieldType())
@@ -192,32 +186,30 @@ namespace serialization
 			case MemberFieldType::Vector:	tag_index = SaveMany<Writer>(writer, structure, data_template, tag_index); break;
 			case MemberFieldType::Map:		tag_index = SaveMap <Writer>(writer, structure, data_template, tag_index); break;
 			case MemberFieldType::Struct:	tag_index = SaveStruct<Writer>(writer, Structure::GetStructure(property.GetOptionalStructID()), data_template, tag_index); break;
-			case MemberFieldType::ObjectPtr:SaveObj(writer, data_template.data_.data(), tag.byte_offset_); break;
+			case MemberFieldType::ObjectPtr:SaveObj(writer, data_template.data_.data(), tag.GetDataOffset()); break;
 			default: writer.Key("value");
 		}
 			
 		switch (property.GetFieldType())
 		{
-			case MemberFieldType::Int8:		writer.Int(GetConstRef<int8>(data_template.data_.data(), tag.byte_offset_)); break;
-			case MemberFieldType::Int16:	writer.Int(GetConstRef<int16>(data_template.data_.data(), tag.byte_offset_)); break;
-			case MemberFieldType::Int32:	writer.Int(GetConstRef<int32>(data_template.data_.data(), tag.byte_offset_)); break;
-			case MemberFieldType::Int64:	writer.Int64(GetConstRef<int64>(data_template.data_.data(), tag.byte_offset_)); break;
-			case MemberFieldType::UInt8:	writer.Uint(GetConstRef<uint8>(data_template.data_.data(), tag.byte_offset_)); break;
-			case MemberFieldType::UInt16:	writer.Uint(GetConstRef<uint16>(data_template.data_.data(), tag.byte_offset_)); break;
-			case MemberFieldType::UInt32:	writer.Uint(GetConstRef<uint32>(data_template.data_.data(), tag.byte_offset_)); break;
-			case MemberFieldType::UInt64:	writer.Uint64(GetConstRef<uint64>(data_template.data_.data(), tag.byte_offset_)); break;
-			case MemberFieldType::Float:	writer.Double(GetConstRef<float>(data_template.data_.data(), tag.byte_offset_)); break;
-			case MemberFieldType::Double:	writer.Double(GetConstRef<double>(data_template.data_.data(), tag.byte_offset_)); break;
-			case MemberFieldType::String:	writer.String(GetConstPtr<char>(data_template.data_.data(), tag.byte_offset_ + sizeof(uint16))
-				, GetConstRef<int16>(data_template.data_.data(), tag.byte_offset_)); break;
+			case MemberFieldType::Int8:		writer.Int(GetConstRef<int8>(data_template.data_.data(), tag.GetDataOffset())); break;
+			case MemberFieldType::Int16:	writer.Int(GetConstRef<int16>(data_template.data_.data(), tag.GetDataOffset())); break;
+			case MemberFieldType::Int32:	writer.Int(GetConstRef<int32>(data_template.data_.data(), tag.GetDataOffset())); break;
+			case MemberFieldType::Int64:	writer.Int64(GetConstRef<int64>(data_template.data_.data(), tag.GetDataOffset())); break;
+			case MemberFieldType::UInt8:	writer.Uint(GetConstRef<uint8>(data_template.data_.data(), tag.GetDataOffset())); break;
+			case MemberFieldType::UInt16:	writer.Uint(GetConstRef<uint16>(data_template.data_.data(), tag.GetDataOffset())); break;
+			case MemberFieldType::UInt32:	writer.Uint(GetConstRef<uint32>(data_template.data_.data(), tag.GetDataOffset())); break;
+			case MemberFieldType::UInt64:	writer.Uint64(GetConstRef<uint64>(data_template.data_.data(), tag.GetDataOffset())); break;
+			case MemberFieldType::Float:	writer.Double(GetConstRef<float>(data_template.data_.data(), tag.GetDataOffset())); break;
+			case MemberFieldType::Double:	writer.Double(GetConstRef<double>(data_template.data_.data(), tag.GetDataOffset())); break;
+			case MemberFieldType::String:	writer.String(GetConstPtr<char>(data_template.data_.data(), tag.GetDataOffset() + sizeof(uint16))
+				, GetConstRef<int16>(data_template.data_.data(), tag.GetDataOffset())); break;
 		}
-		//writer.EndObject();
 		return tag_index;
 	}
 
 	template <typename Writer> uint32 JsonDataStorage::SaveStruct(Writer& writer, const Structure& structure, const DataTemplate& data_template, uint32 tag_index)
 	{
-		//writer.StartObject();
 		writer.Key("struct_id");
 		writer.Uint(structure.id_);
 		writer.Key("struct_name");
@@ -228,10 +220,10 @@ namespace serialization
 			while (tag_index < data_template.tags_.size())
 			{
 				const Tag tag = data_template.tags_[tag_index];
-				Assert(tag.nest_level_ <= first_tag.nest_level_);
-				if (tag.nest_level_ != first_tag.nest_level_ || tag.element_index_ != first_tag.element_index_ || tag.is_key_ != first_tag.is_key_)
+				Assert(tag.GetNestLevel() <= first_tag.GetNestLevel());
+				if (tag.GetNestLevel() != first_tag.GetNestLevel() || tag.GetElementIndex() != first_tag.GetElementIndex() || tag.IsKey() != first_tag.IsKey())
 					break;
-				if (kSuperStructPropertyIndex == tag.property_index_)
+				if (kSuperStructPropertyIndex == tag.GetPropertyIndex())
 				{
 					tag_index++;
 					SaveTagSuperStruct<Writer>(writer, tag);
@@ -243,15 +235,14 @@ namespace serialization
 				}
 			}
 		}
-		//writer.EndObject();
 		return tag_index;
 	}
 
 	template <typename Writer> void JsonDataStorage::Save(Writer& writer, const DataTemplate& data_template)
 	{
 		writer.StartObject();
-		const Structure& main_structure = Structure::GetStructure(data_template.structure_id_);
-		const uint32 saved_tags = SaveStruct<Writer>(writer, main_structure, data_template, 0);
+		const Structure& structure = Structure::GetStructure(data_template.structure_id_);
+		const uint32 saved_tags = SaveStruct<Writer>(writer, structure, data_template, 0);
 
 		Assert(saved_tags == data_template.tags_.size());
 		writer.EndObject();

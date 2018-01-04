@@ -22,6 +22,7 @@ namespace
 	{
 		GetRef<M>(dst, 0) = GetConstRef<M>(src, src_offset);
 	}
+
 	template<> void LoadSimpleValue<Object*>(uint8* const dst, const uint8* const src, const uint32 src_offset)
 	{
 		const StructID struct_id = GetConstRef<StructID>(src, src_offset);
@@ -30,6 +31,7 @@ namespace
 		Object* obj = structure.obj_from_id(object_id);
 		GetRef<Object*>(dst, 0) = obj;
 	}
+
 	template<> void LoadSimpleValue<std::string>(uint8* const dst, const uint8* const src, const uint32 src_offset)
 	{
 		const uint16 len = GetConstRef<uint16>(src, src_offset);
@@ -91,146 +93,100 @@ namespace
 		return was_saved;
 	}
 
-	static uint32 GetNativeFieldSize(const std::vector<Property>& properties, const uint32 property_index)
+	static bool SaveLength16(std::vector<uint8>& dst, uint32 len, const Flag32<SaveFlags> flags)
 	{
-		const auto& property = properties[property_index];
-		switch (property.GetFieldType())
+		const bool was_saved = (0 != len) || flags[SaveFlags::SaveNativeDefaultValues];
+		if (was_saved)
 		{
-			case MemberFieldType::Int8:		return sizeof(int8);
-			case MemberFieldType::Int16:	return sizeof(int16);
-			case MemberFieldType::Int32:	return sizeof(int32);
-			case MemberFieldType::Int64:	return sizeof(int64);
-			case MemberFieldType::UInt8:	return sizeof(uint8);
-			case MemberFieldType::UInt16:	return sizeof(uint16);
-			case MemberFieldType::UInt32:	return sizeof(uint32);
-			case MemberFieldType::UInt64:	return sizeof(uint64);
-			case MemberFieldType::Float:	return sizeof(float);
-			case MemberFieldType::Double:	return sizeof(double);
-			case MemberFieldType::ObjectPtr:return sizeof(Object*);
-
-			case MemberFieldType::String:	return sizeof(std::string);
-			case MemberFieldType::Vector:	return sizeof(std::vector<int32>);
-			case MemberFieldType::Map:		return sizeof(std::map<int32, int32>);
-			case MemberFieldType::Struct:	return Structure::GetStructure(property.GetOptionalStructID()).size_;
-			case MemberFieldType::Array:	return property.GetArraySize() * GetNativeFieldSize(properties, property_index + 1);
+			const uint32 dst_offset = dst.size();
+			dst.resize(dst_offset + sizeof(uint16));
+			GetRef<uint16>(dst.data(), dst_offset) = static_cast<uint16>(len);
 		}
-		Assert(false);
-		return 0;
-	}
-
-	static void SaveLength16(std::vector<uint8>& dst, uint32 len)
-	{
-		const uint32 dst_offset = dst.size();
-		dst.resize(dst_offset + sizeof(uint16));
-		GetRef<uint16>(dst.data(), dst_offset) = static_cast<uint16>(len);
+		return was_saved;
 	}
 };
 
 #pragma region SAVE
-bool serialization::DataTemplate::SaveStructure(const Structure & structure
-	, const uint8 * const src
-	, const uint32 nest_level
-	, const Flag32<SaveFlags> flags)
+bool serialization::DataTemplate::SaveStructure(const uint8* const src
+	, const Structure& structure, const uint32 nest_level, const Flag32<SaveFlags> flags)
 {
 	bool was_saved = false;
 	if (structure.super_id_ != kWrongID)
 	{
-		tags_.emplace_back(Tag(
-#if EDITOR
-			kWrongID,
-#endif		
-			kSuperStructPropertyIndex, data_.size(), nest_level, 0, 0));
-		was_saved = SaveStructure(Structure::GetStructure(structure.super_id_), src, nest_level + 1, flags);
-
+		tags_.emplace_back(Tag(structure.id_, kSuperStructPropertyID, kSuperStructPropertyIndex, 0, MemberFieldType::Struct
+			, data_.size(), nest_level, 0, 0));
+		was_saved = SaveStructure(src, Structure::GetStructure(structure.super_id_), nest_level + 1, flags);
 		if (!was_saved)
 		{
 			tags_.pop_back();
 		}
 	}
 
-	for (uint32 property_index = 0; property_index < structure.properties_.size(); 
-		property_index = NextPropertyIndexOnThisLevel(structure.properties_, property_index))
+	for (uint32 property_index = 0; property_index < structure.GetNumberOfProperties();
+		property_index = structure.NextPropertyIndexOnThisLevel(property_index))
 	{
-		const auto& property = structure.properties_[property_index];
+		const auto& property = structure.GetProperty(property_index);
 		Assert(EPropertyUsage::Main == property.GetPropertyUsage());
-		was_saved |= SaveValue(src + property.GetFieldOffset(), structure.properties_, property_index, nest_level, 0, false, flags);
+		was_saved |= SaveValue(src + property.GetFieldOffset(), structure, property_index, nest_level, flags);
 	}
 	return was_saved;
 }
 
-bool serialization::DataTemplate::SaveArray(const uint8 * src
-	, const std::vector<Property>& properties
-	, const uint32 property_index
-	, const uint32 nest_level
-	, const Flag32<SaveFlags> flags)
+bool serialization::DataTemplate::SaveArray(const uint8* const src, const Structure& structure
+	, const PropertyIndex property_index, const uint32 nest_level, const Flag32<SaveFlags> flags)
 {
-	const uint32 element_size = GetNativeFieldSize(properties, property_index+1);
-	const uint32 array_size = properties[property_index].GetArraySize();
+	const PropertyIndex element_property_index = structure.GetSubPropertyIndex(property_index, ESubType::Array_Element);
+	const uint32 element_size = structure.GetNativeFieldSize(element_property_index);
+	const uint32 array_size = structure.GetProperty(property_index).GetArraySize();
 	bool was_saved = false;
 	for (uint32 i = 0; i < array_size; i++)
 	{
-		was_saved |= SaveValue(src + i * element_size, properties, property_index + 1, nest_level, i, false, flags);
+		was_saved |= SaveValue(src + i * element_size, structure, element_property_index, nest_level, flags, i);
 	}
 	return was_saved;
 }
 
-bool serialization::DataTemplate::SaveVector(const uint8 * src
-	, const std::vector<Property>& properties
-	, const uint32 property_index
-	, const uint32 nest_level
-	, const Flag32<SaveFlags> flags)
+bool serialization::DataTemplate::SaveVector(const uint8* const src, const Structure& structure
+	, const PropertyIndex property_index, const uint32 nest_level, const Flag32<SaveFlags> flags)
 {
-	bool was_saved = false;
-	const auto& handler = properties[property_index + 1].GetVectorHandler();
-	const uint32 element_property_index = property_index + 2;
+	const auto& handler = structure.GetHandlerProperty(property_index).GetVectorHandler();
+	const PropertyIndex element_property_index = structure.GetSubPropertyIndex(property_index, ESubType::Vector_Element);
 	const uint32 num = handler.GetSize(src);
-
-	SaveLength16(data_, num);
-
+	bool was_saved = SaveLength16(data_, num, flags);
 	for (uint32 i = 0; i < num; i++)
 	{
-		was_saved |= SaveValue(handler.GetElement(src, i), properties, element_property_index, nest_level, i, false, flags);
+		was_saved |= SaveValue(handler.GetElement(src, i), structure, element_property_index, nest_level, flags, i);
 	}
 	return was_saved;
 }
 
-bool serialization::DataTemplate::SaveMap(const uint8* src
-	, const std::vector<Property>& properties
-	, const uint32 property_index
-	, const uint32 nest_level
-	, const Flag32<SaveFlags> flags)
+bool serialization::DataTemplate::SaveMap(const uint8* const src, const Structure& structure
+	, const PropertyIndex property_index, const uint32 nest_level, const Flag32<SaveFlags> flags)
 {
-	bool was_saved = false;
-	const auto& handler = properties[property_index + 1].GetMapHandler();
-	const uint32 key_property_index = property_index + 2;
-	const uint32 value_property_index = NextPropertyIndexOnThisLevel(properties, key_property_index);
+	const auto& handler = structure.GetHandlerProperty(property_index).GetMapHandler();
+	const PropertyIndex key_property_index = structure.GetSubPropertyIndex(property_index, ESubType::Key);
+	const PropertyIndex value_property_index = structure.GetSubPropertyIndex(property_index, ESubType::Map_Value);
 	const uint32 num = handler.GetSize(src);
-
-	SaveLength16(data_, num);
-
+	bool was_saved = SaveLength16(data_, num, flags);
 	for (uint32 i = 0; i < num; i++)
 	{
-		was_saved |= SaveValue(handler.GetKey(src, i),	properties, key_property_index,		nest_level, i, true, flags);
-		was_saved |= SaveValue(handler.GetValue(src, i),	properties, value_property_index,	nest_level, i, false, flags);
+		const Flag32<SaveFlags> key_flags = flags | SaveFlags::SaveNativeDefaultValues;
+		was_saved |= SaveValue(handler.GetKey(src, i),	structure, key_property_index,	nest_level, key_flags,	i, true);
+		was_saved |= SaveValue(handler.GetValue(src, i),structure, value_property_index,nest_level, flags,		i, false);
 	}
 	return was_saved;
 }
 
-bool serialization::DataTemplate::SaveValue(const uint8 * src
-	, const std::vector<Property>& properties
-	, const uint32 property_index
-	, const uint32 nest_level
-	, const uint32 element_index
-	, const bool is_key
-	, const Flag32<SaveFlags> flags)
+bool serialization::DataTemplate::SaveValue(const uint8* const src, const Structure& structure
+	, const PropertyIndex property_index, const uint32 nest_level, const Flag32<SaveFlags> flags
+	, const uint32 element_index, const bool is_key)
 {
-	const auto& property = properties[property_index];
+	const auto& property = structure.GetProperty(property_index);
 	Assert(property.GetPropertyUsage() == EPropertyUsage::Main || property.GetPropertyUsage() == EPropertyUsage::SubType);
-	tags_.emplace_back(Tag(
-#if EDITOR
-		property.GetPropertyID(), 
-#endif		
-		property_index, data_.size(), nest_level, element_index, is_key ? 1 : 0));
+	const PropertyIndex main_property_idx = structure.GetMainPropertyIndex(property.GetPropertyID());
+	Assert(main_property_idx != kWrongID);
+	tags_.emplace_back(Tag(structure.id_, property.GetPropertyID(), property_index, (property_index - main_property_idx),
+		property.GetFieldType(), data_.size(), nest_level, element_index, is_key ? 1 : 0));
 	bool was_saved = false;
 	switch (property.GetFieldType())
 	{
@@ -246,13 +202,13 @@ bool serialization::DataTemplate::SaveValue(const uint8 * src
 		case MemberFieldType::Double:	was_saved = SaveSimpleValue<double	>(data_, src, 0.0, flags);						break;
 		case MemberFieldType::String:	was_saved = SaveString(data_, src, flags);											break;
 		case MemberFieldType::ObjectPtr:was_saved = SaveObject(data_, src, property.GetOptionalStructID(), flags);			break;
-		case MemberFieldType::Array:	was_saved = SaveArray(src, properties, property_index, nest_level + 1, flags);		break;
-		case MemberFieldType::Vector:	was_saved = SaveVector(src, properties, property_index, nest_level + 1, flags);	break;
-		case MemberFieldType::Map:		was_saved = SaveMap(src, properties, property_index, nest_level + 1, flags);		break;
+		case MemberFieldType::Array:	was_saved = SaveArray(	src, structure, property_index, nest_level + 1, flags);		break;
+		case MemberFieldType::Vector:	was_saved = SaveVector(	src, structure, property_index, nest_level + 1, flags);		break;
+		case MemberFieldType::Map:		was_saved = SaveMap(	src, structure, property_index, nest_level + 1, flags);		break;
 		case MemberFieldType::Struct:
-			const Structure& structure = Structure::GetStructure(property.GetOptionalStructID());
-			Assert(structure.RepresentNonObjectStructure());
-			was_saved = SaveStructure(structure, src, nest_level + 1, flags);
+			const Structure& inner_structure = Structure::GetStructure(property.GetOptionalStructID());
+			Assert(inner_structure.RepresentNonObjectStructure());
+			was_saved = SaveStructure(src, inner_structure, nest_level + 1, flags);
 			break;
 	}
 	if (!was_saved)
@@ -271,7 +227,7 @@ void serialization::DataTemplate::Save(const Object * obj, const Flag32<SaveFlag
 	const auto& structure = Structure::GetStructure(structure_id_);
 	Assert(structure.RepresentsObjectClass());
 	Assert(tags_.empty() && data_.empty());
-	SaveStructure(structure, reinterpret_cast<const uint8*>(obj), 0, flags);
+	SaveStructure(reinterpret_cast<const uint8*>(obj), structure, 0, flags);
 	Assert(tags_.empty() == data_.empty());
 }
 
@@ -280,74 +236,81 @@ void serialization::DataTemplate::Save(const Object * obj, const Flag32<SaveFlag
 #pragma region LOAD
 uint32 serialization::DataTemplate::LoadArray(const Structure& structure, uint8* dst, const Tag tag, uint32 tag_index) const
 {
-	const auto& property = structure.properties_[tag.property_index_];
-	const uint32 element_size = GetNativeFieldSize(structure.properties_, tag.property_index_ + 1);
+	const auto& property = structure.GetProperty(tag.GetPropertyIndex());
+	const PropertyIndex element_property_index = structure.GetSubPropertyIndex(tag.GetPropertyIndex(), ESubType::Array_Element);
+	const uint32 element_size = structure.GetNativeFieldSize(element_property_index);
 	while (tag_index < tags_.size())
 	{
 		const Tag inner_tag = tags_[tag_index];
-		const bool within_size = inner_tag.element_index_ < property.GetArraySize();
-		Assert(inner_tag.element_index_ < property.GetArraySize());
-		const bool expected_property_idx = inner_tag.property_index_ == tag.property_index_ + 1;
-		const bool expected_nest_idx = inner_tag.nest_level_ == tag.nest_level_ + 1;
+		const bool within_size = inner_tag.GetElementIndex() < property.GetArraySize();
+		Assert(within_size);
+		const bool expected_property_idx = inner_tag.GetPropertyIndex() == element_property_index;
+		const bool expected_nest_idx = inner_tag.GetNestLevel() == tag.GetNestLevel() + 1;
 		Assert(expected_property_idx == expected_nest_idx);
 		if (!expected_property_idx || !expected_nest_idx || !within_size)
 			break;
 
-		tag_index = LoadValue(structure, dst + inner_tag.element_index_ * element_size, tag_index);
+		tag_index = LoadValue(structure, dst + inner_tag.GetElementIndex() * element_size, tag_index);
 	}
 	return tag_index;
 }
 
 uint32 serialization::DataTemplate::LoadVector(const Structure& structure, uint8* dst, const Tag tag, uint32 tag_index) const
 {
-	const auto& handler = structure.properties_[tag.property_index_ + 1].GetVectorHandler();
-	const uint32 size = GetConstRef<uint16>(data_.data(), tag.byte_offset_);
+	const auto& handler = structure.GetHandlerProperty(tag.GetPropertyIndex()).GetVectorHandler();
+	const PropertyIndex element_property_index = structure.GetSubPropertyIndex(tag.GetPropertyIndex(), ESubType::Vector_Element);
+	const uint32 size = GetConstRef<uint16>(data_.data(), tag.GetDataOffset());
 	handler.SetSize(dst, size);
 	while (tag_index < tags_.size())
 	{
 		const Tag inner_tag = tags_[tag_index];
-		const bool expected_property_idx = inner_tag.property_index_ == tag.property_index_ + 2;
-		const bool expected_nest_idx = inner_tag.nest_level_ == tag.nest_level_ + 1;
+		const bool expected_property_idx = inner_tag.GetPropertyIndex() == element_property_index;
+		const bool expected_nest_idx = inner_tag.GetNestLevel() == (tag.GetNestLevel() + 1);
 		Assert(expected_property_idx == expected_nest_idx);
 		if (!expected_property_idx || !expected_nest_idx)
 			break;
-		tag_index = LoadValue(structure, handler.GetElement(dst, inner_tag.element_index_), tag_index);
+		Assert(inner_tag.GetElementIndex() < size);
+		tag_index = LoadValue(structure, handler.GetElement(dst, inner_tag.GetElementIndex()), tag_index);
 	}
 	return tag_index;
 }
 
 uint32 serialization::DataTemplate::LoadMap(const Structure& structure, uint8* dst, const Tag tag, uint32 tag_index) const
 {
-	const auto& handler = structure.properties_[tag.property_index_ + 1].GetMapHandler();
-	const uint32 key_property_index = tag.property_index_ + 2;
-	const uint32 value_property_index = NextPropertyIndexOnThisLevel(structure.properties_, key_property_index);
-	const uint32 map_size = GetConstRef<uint16>(data_.data(), tag.byte_offset_); //number of keys
+	const auto& handler = structure.GetHandlerProperty(tag.GetPropertyIndex()).GetMapHandler();
+	const PropertyIndex key_property_index = structure.GetSubPropertyIndex(tag.GetPropertyIndex(), ESubType::Key);
+	const PropertyIndex value_property_index = structure.GetSubPropertyIndex(tag.GetPropertyIndex(), ESubType::Map_Value);
+	const uint32 map_size = GetConstRef<uint16>(data_.data(), tag.GetDataOffset()); //number of keys
 
 	std::vector<uint8> temp_key_memory;
 	for (uint32 idx = 0; idx < map_size; idx++)
 	{
-		Assert(tag_index < tags_.size());
-		//assume SaveNativeDefaultValues
 		//assume proper order
+		Assert(tag_index < tags_.size());
 		{
+			//assume SaveNativeDefaultValues
 			const Tag key_tag = tags_[tag_index];
-			Assert(key_tag.nest_level_ == tag.nest_level_ + 1);
-			Assert(key_tag.is_key_);
-			Assert(key_tag.property_index_ == key_property_index);
-			Assert(key_tag.element_index_ == idx);
+			Assert(key_tag.GetNestLevel() == (tag.GetNestLevel() + 1));
+			Assert(key_tag.IsKey());
+			Assert(key_tag.GetPropertyIndex() == key_property_index);
+			Assert(key_tag.GetElementIndex() == idx);
 			handler.InitializeKeyMemory(temp_key_memory);
 			tag_index = LoadValue(structure, temp_key_memory.data(), tag_index);
-			Assert(tag_index < tags_.size());
 		}
 
+		uint8* value_ptr = handler.Add(dst, temp_key_memory);
+		if (tag_index < tags_.size())
 		{
 			const Tag value_tag = tags_[tag_index];
-			Assert(value_tag.nest_level_ == tag.nest_level_ + 1);
-			Assert(!value_tag.is_key_);
-			Assert(value_tag.property_index_ == value_property_index);
-			Assert(value_tag.element_index_ == idx);
-			uint8* value_ptr = handler.Add(dst, temp_key_memory);
-			tag_index = LoadValue(structure, value_ptr, tag_index);
+			const bool expected_nest_lvl = value_tag.GetNestLevel() == (tag.GetNestLevel() + 1);
+			const bool expected_property_idx = value_tag.GetPropertyIndex() == value_property_index;
+			const bool proper_value = expected_nest_lvl && expected_property_idx && !value_tag.IsKey();
+			Assert(proper_value == expected_nest_lvl && proper_value == expected_property_idx);
+			if (proper_value)
+			{
+				Assert(value_tag.GetElementIndex() == idx);
+				tag_index = LoadValue(structure, value_ptr, tag_index);
+			}
 		}
 	}
 	return tag_index;
@@ -356,25 +319,26 @@ uint32 serialization::DataTemplate::LoadMap(const Structure& structure, uint8* d
 uint32 serialization::DataTemplate::LoadValue(const Structure& structure, uint8* dst, uint32 tag_index) const
 {
 	const Tag tag = tags_[tag_index];
-	const auto& property = structure.properties_[tag.property_index_];
+	const auto& property = structure.GetProperty(tag.GetPropertyIndex());
+	Assert(property.GetPropertyUsage() != EPropertyUsage::Handler);
 	tag_index++;
 	switch (property.GetFieldType())
 	{
-		case MemberFieldType::Int8:		LoadSimpleValue<uint8>		(dst, data_.data(), tag.byte_offset_);	break;
-		case MemberFieldType::Int16:	LoadSimpleValue<int16>		(dst, data_.data(), tag.byte_offset_);	break;
-		case MemberFieldType::Int32:	LoadSimpleValue<int32>		(dst, data_.data(), tag.byte_offset_);	break;
-		case MemberFieldType::Int64:	LoadSimpleValue<int64>		(dst, data_.data(), tag.byte_offset_);	break;
-		case MemberFieldType::UInt8:	LoadSimpleValue<uint8>		(dst, data_.data(), tag.byte_offset_);	break;
-		case MemberFieldType::UInt16:	LoadSimpleValue<uint16>		(dst, data_.data(), tag.byte_offset_);	break;
-		case MemberFieldType::UInt32:	LoadSimpleValue<uint32>		(dst, data_.data(), tag.byte_offset_);	break;
-		case MemberFieldType::UInt64:	LoadSimpleValue<uint64>		(dst, data_.data(), tag.byte_offset_);	break;
-		case MemberFieldType::Float:	LoadSimpleValue<float>		(dst, data_.data(), tag.byte_offset_);	break;
-		case MemberFieldType::Double:	LoadSimpleValue<double>		(dst, data_.data(), tag.byte_offset_);	break;
-		case MemberFieldType::String:	LoadSimpleValue<std::string>(dst, data_.data(), tag.byte_offset_);	break;
-		case MemberFieldType::ObjectPtr:LoadSimpleValue<Object*>	(dst, data_.data(), tag.byte_offset_);	break;
-		case MemberFieldType::Array:	tag_index = LoadArray		(structure, dst, tag, tag_index);		break;
-		case MemberFieldType::Vector:	tag_index = LoadVector		(structure, dst, tag, tag_index);		break;
-		case MemberFieldType::Map:		tag_index = LoadMap			(structure, dst, tag, tag_index);		break;
+		case MemberFieldType::Int8:		LoadSimpleValue<uint8>		(dst, data_.data(), tag.GetDataOffset());	break;
+		case MemberFieldType::Int16:	LoadSimpleValue<int16>		(dst, data_.data(), tag.GetDataOffset());	break;
+		case MemberFieldType::Int32:	LoadSimpleValue<int32>		(dst, data_.data(), tag.GetDataOffset());	break;
+		case MemberFieldType::Int64:	LoadSimpleValue<int64>		(dst, data_.data(), tag.GetDataOffset());	break;
+		case MemberFieldType::UInt8:	LoadSimpleValue<uint8>		(dst, data_.data(), tag.GetDataOffset());	break;
+		case MemberFieldType::UInt16:	LoadSimpleValue<uint16>		(dst, data_.data(), tag.GetDataOffset());	break;
+		case MemberFieldType::UInt32:	LoadSimpleValue<uint32>		(dst, data_.data(), tag.GetDataOffset());	break;
+		case MemberFieldType::UInt64:	LoadSimpleValue<uint64>		(dst, data_.data(), tag.GetDataOffset());	break;
+		case MemberFieldType::Float:	LoadSimpleValue<float>		(dst, data_.data(), tag.GetDataOffset());	break;
+		case MemberFieldType::Double:	LoadSimpleValue<double>		(dst, data_.data(), tag.GetDataOffset());	break;
+		case MemberFieldType::String:	LoadSimpleValue<std::string>(dst, data_.data(), tag.GetDataOffset());	break;
+		case MemberFieldType::ObjectPtr:LoadSimpleValue<Object*>	(dst, data_.data(), tag.GetDataOffset());	break;
+		case MemberFieldType::Array:	tag_index = LoadArray		(structure, dst, tag, tag_index);			break;
+		case MemberFieldType::Vector:	tag_index = LoadVector		(structure, dst, tag, tag_index);			break;
+		case MemberFieldType::Map:		tag_index = LoadMap			(structure, dst, tag, tag_index);			break;
 		case MemberFieldType::Struct:	tag_index = LoadStructure(
 								Structure::GetStructure(property.GetOptionalStructID()), dst, tag_index);	break;
 	}
@@ -389,17 +353,20 @@ uint32 serialization::DataTemplate::LoadStructure(const Structure& structure, ui
 		while (tag_index < tags_.size())
 		{
 			const Tag tag = tags_[tag_index];
-			Assert(tag.nest_level_ <= first_tag.nest_level_);
-			if (tag.nest_level_ != first_tag.nest_level_ || tag.element_index_ != first_tag.element_index_ || tag.is_key_ != first_tag.is_key_)
+			Assert(tag.GetNestLevel() <= first_tag.GetNestLevel());
+			if (tag.GetNestLevel() != first_tag.GetNestLevel() || tag.GetElementIndex() != first_tag.GetElementIndex() 
+				|| tag.IsKey() != first_tag.IsKey())
 				break;
-			if (kSuperStructPropertyIndex == tag.property_index_)
+			if (kSuperStructPropertyIndex == tag.GetPropertyIndex())
 			{
 				tag_index++;
-				tag_index = LoadStructure(Structure::GetStructure(structure.super_id_), dst, tag_index);
+				const auto* super_struct = structure.TryGetSuperStructure();
+				Assert(nullptr != super_struct);
+				tag_index = LoadStructure(*super_struct, dst, tag_index);
 			}
 			else
 			{
-				const auto& property = structure.properties_[tag.property_index_];
+				const auto& property = structure.GetProperty(tag.GetPropertyIndex());
 				tag_index = LoadValue(structure, dst + property.GetFieldOffset(), tag_index);
 			}
 		}
@@ -411,19 +378,281 @@ void serialization::DataTemplate::Load(Object* obj) const
 {
 	Assert(nullptr != obj);
 	Assert(kWrongID != structure_id_);
-	Assert(obj->GetReflectionStructureID() == structure_id_); // based on
 	const auto& structure = Structure::GetStructure(structure_id_);
+	Assert(Structure::GetStructure(obj->GetReflectionStructureID()).IsBasedOn(structure_id_));
 	Assert(structure.RepresentsObjectClass());
 	LoadStructure(structure, reinterpret_cast<uint8*>(obj), 0);
 }
 
 #pragma endregion
 
-void serialization::DataTemplate::RefreshAfterLayoutChanged()
+namespace layout_changed
 {
-	Assert(kWrongID != structure_id_);
-	const auto& structure = Structure::GetStructure(structure_id_);
-	Assert(structure.RepresentsObjectClass());
+	using namespace serialization;
+
+	uint32 LoadValue(DataTemplate& dst, const Structure& structure, const DataTemplate& src, uint32 tag_index);
+	uint32 LoadStructure(DataTemplate& dst, const Structure& structure, const DataTemplate& src, uint32 tag_index);
+
+	template<typename M> static void LoadSimpleValue(DataTemplate& dst, const uint8* const src, const uint32 src_offset)
+	{
+		const auto vec_size = dst.data_.size();
+		dst.data_.resize(vec_size + sizeof(M));
+		GetRef<M>(dst.data_.data(), vec_size) = GetConstRef<M>(src, src_offset);
+	}
+
+	template<> void LoadSimpleValue<Object*>(DataTemplate& dst, const uint8* const src, const uint32 src_offset)
+	{
+		const uint32 dst_offset = dst.data_.size();
+		dst.data_.resize(dst_offset + sizeof(StructID) + sizeof(ObjectID));
+
+		GetRef<StructID>(dst.data_.data(), dst_offset) = GetConstRef<StructID>(src, src_offset);
+		GetRef<ObjectID>(dst.data_.data(), dst_offset + sizeof(StructID)) = GetConstRef<ObjectID>(src, src_offset + sizeof(StructID));
+	}
+
+	template<> void LoadSimpleValue<std::string>(DataTemplate& dst, const uint8* const src, const uint32 src_offset)
+	{
+		const uint16 len = GetConstRef<uint16>(src, src_offset);
+		const char* c_str = &GetConstRef<char>(src, src_offset + sizeof(uint16));
+		const uint32 dst_offset = dst.data_.size();
+		dst.data_.resize(dst_offset + sizeof(uint16) + len * sizeof(char));
+		GetRef<uint16>(dst.data_.data(), dst_offset) = static_cast<uint16>(len);
+		for (uint32 i = 0; i < len; i++)
+		{
+			GetRef<char>(dst.data_.data(), dst_offset + sizeof(uint16) + i * sizeof(char)) = c_str[i];
+		}
+	}
+
+	uint32 LoadArray(DataTemplate& dst, const Structure& structure, const DataTemplate& src, const PropertyIndex main_property_index, const Tag tag, uint32 tag_index)
+	{
+		const auto& property = structure.GetProperty(main_property_index + tag.GetSubPropertyOffset());
+		const PropertyIndex element_property_index = structure.GetSubPropertyIndex(main_property_index + tag.GetSubPropertyOffset(), ESubType::Array_Element);
+		const SubPropertyOffset element_property_offset = element_property_index - main_property_index;
+		while (tag_index < src.tags_.size())
+		{
+			const Tag inner_tag = src.tags_[tag_index];
+			if (inner_tag.GetNestLevel() <= tag.GetNestLevel())
+				break;
+			if (inner_tag.GetNestLevel() > (tag.GetNestLevel() + 1))
+			{
+				tag_index++;
+				continue;
+			}
+
+			const bool expected_property = (inner_tag.GetPropertyID() == property.GetPropertyID()) &&
+				(element_property_offset == inner_tag.GetSubPropertyOffset());
+			if (!expected_property)
+				break;
+			const bool within_size = inner_tag.GetElementIndex() < property.GetArraySize();
+			if (!within_size)
+			{
+				tag_index++;
+				continue;
+			}
+			tag_index = LoadValue(dst, structure, src, tag_index);
+		}
+		return tag_index;
+	}
+
+	uint32 LoadVector(DataTemplate& dst, const Structure& structure, const DataTemplate& src, const PropertyIndex main_property_index, const Tag tag, uint32 tag_index)
+	{
+		const auto& property = structure.GetProperty(main_property_index + tag.GetSubPropertyOffset());
+		const PropertyIndex element_property_index = structure.GetSubPropertyIndex(main_property_index + tag.GetSubPropertyOffset(), ESubType::Vector_Element);
+		const SubPropertyOffset element_property_offset = element_property_index - main_property_index;
+		const uint32 size = GetConstRef<uint16>(src.data_.data(), tag.GetDataOffset());
+		SaveLength16(dst.data_, size, Flag32<SaveFlags>());
+		while (tag_index < src.tags_.size())
+		{
+			const Tag inner_tag = src.tags_[tag_index];
+			if (inner_tag.GetNestLevel() <= tag.GetNestLevel())
+				break;
+			if (inner_tag.GetNestLevel() >(tag.GetNestLevel() + 1))
+			{
+				tag_index++;
+				continue;
+			}
+
+			const bool expected_property = (inner_tag.GetPropertyID() == property.GetPropertyID()) &&
+				(element_property_offset == inner_tag.GetSubPropertyOffset());
+			if (!expected_property)
+				break;
+
+			const bool within_size = inner_tag.GetElementIndex() < size;
+			if (!within_size)
+			{
+				tag_index++;
+				continue;
+			}
+
+			tag_index = LoadValue(dst, structure, src, tag_index);
+		}
+		return tag_index;
+	}
+
+	uint32 LoadMap(DataTemplate& dst, const Structure& structure, const DataTemplate& src, const PropertyIndex main_property_index, const Tag tag, uint32 tag_index)
+	{
+		const PropertyIndex map_property_index = main_property_index + tag.GetSubPropertyOffset();
+		const auto& property = structure.GetProperty(map_property_index);
+		const PropertyIndex key_property_index = structure.GetSubPropertyIndex(map_property_index, ESubType::Key);
+		const SubPropertyOffset key_property_offset = key_property_index - main_property_index;
+		const PropertyIndex value_property_index = structure.GetSubPropertyIndex(map_property_index, ESubType::Map_Value);
+		const SubPropertyOffset value_property_offset = value_property_index - main_property_index;
+		const uint32 map_size = GetConstRef<uint16>(src.data_.data(), tag.GetDataOffset()); //number of keys
+		SaveLength16(dst.data_, map_size, Flag32<SaveFlags>());
+		while (tag_index < src.tags_.size())
+		{
+			const Tag inner_tag = src.tags_[tag_index];
+			if (inner_tag.GetNestLevel() <= tag.GetNestLevel())
+				break;
+
+			if (inner_tag.GetNestLevel() >(tag.GetNestLevel() + 1))
+			{
+				tag_index++;
+				continue;
+			}
+
+			const bool expected_main_property = inner_tag.GetPropertyID() == property.GetPropertyID();
+			if (!expected_main_property)
+				break;
+
+			const bool expected_property_offset = inner_tag.GetSubPropertyOffset() == (inner_tag.IsKey() ? key_property_offset : value_property_offset);
+			if (!expected_property_offset)
+				break;
+
+			const bool within_size = inner_tag.GetElementIndex() < map_size;
+			if (!within_size)
+			{
+				tag_index++;
+				continue;
+			}
+			
+			tag_index = LoadValue(dst, structure, src, tag_index);
+		}
+		return tag_index;
+	}
+
+	uint32 LoadValue(DataTemplate& dst, const Structure& structure, const DataTemplate& src, uint32 tag_index)
+	{
+		const Tag tag = src.tags_[tag_index];
+		tag_index++;
+		const PropertyIndex main_property_idx = structure.GetMainPropertyIndex(tag.GetPropertyID());
+		if (kWrongID == main_property_idx) {
+			ErrorStream() << "layout_changed::LoadValue cannot find property by ID\n";
+			return tag_index;
+		}
+		const PropertyIndex property_idx = main_property_idx + tag.GetSubPropertyOffset();
+		if (property_idx >= structure.GetNumberOfProperties()) {
+			ErrorStream() << "layout_changed::LoadValue property index out of scope\n";
+			return tag_index;
+		}
+		const auto& property = structure.GetProperty(property_idx);
+		if (EPropertyUsage::Handler == property.GetPropertyUsage()) {
+			ErrorStream() << "layout_changed::LoadValue unexpected handler property\n";
+			return tag_index;
+		}
+		if (tag.GetFieldType() != property.GetFieldType()) {
+			ErrorStream() << "layout_changed::LoadValue " << property.GetName() << " different type\n";
+			return tag_index;
+		}
+		const uint32 saved_data = dst.data_.size();
+		dst.tags_.emplace_back(Tag(structure.id_, property.GetPropertyID(), property_idx, (property_idx - main_property_idx),
+			property.GetFieldType(), saved_data, tag.GetNestLevel(), tag.GetElementIndex(), tag.IsKey() ? 1 : 0));
+		switch (property.GetFieldType())
+		{
+			case MemberFieldType::Int8:		LoadSimpleValue<uint8>		(dst, src.data_.data(), tag.GetDataOffset());	break;
+			case MemberFieldType::Int16:	LoadSimpleValue<int16>		(dst, src.data_.data(), tag.GetDataOffset());	break;
+			case MemberFieldType::Int32:	LoadSimpleValue<int32>		(dst, src.data_.data(), tag.GetDataOffset());	break;
+			case MemberFieldType::Int64:	LoadSimpleValue<int64>		(dst, src.data_.data(), tag.GetDataOffset());	break;
+			case MemberFieldType::UInt8:	LoadSimpleValue<uint8>		(dst, src.data_.data(), tag.GetDataOffset());	break;
+			case MemberFieldType::UInt16:	LoadSimpleValue<uint16>		(dst, src.data_.data(), tag.GetDataOffset());	break;
+			case MemberFieldType::UInt32:	LoadSimpleValue<uint32>		(dst, src.data_.data(), tag.GetDataOffset());	break;
+			case MemberFieldType::UInt64:	LoadSimpleValue<uint64>		(dst, src.data_.data(), tag.GetDataOffset());	break;
+			case MemberFieldType::Float:	LoadSimpleValue<float>		(dst, src.data_.data(), tag.GetDataOffset());	break;
+			case MemberFieldType::Double:	LoadSimpleValue<double>		(dst, src.data_.data(), tag.GetDataOffset());	break;
+			case MemberFieldType::String:	LoadSimpleValue<std::string>(dst, src.data_.data(), tag.GetDataOffset());	break;
+			case MemberFieldType::ObjectPtr:LoadSimpleValue<Object*>	(dst, src.data_.data(), tag.GetDataOffset());	break;
+			case MemberFieldType::Array:	tag_index = LoadArray		(dst, structure, src, main_property_idx, tag, tag_index);	break;
+			case MemberFieldType::Vector:	tag_index = LoadVector		(dst, structure, src, main_property_idx, tag, tag_index);	break;
+			case MemberFieldType::Map:		tag_index = LoadMap			(dst, structure, src, main_property_idx, tag, tag_index);	break;
+			case MemberFieldType::Struct:	tag_index = LoadStructure(dst,
+				Structure::GetStructure(property.GetOptionalStructID()), src, tag_index);	break;
+		}
+		if (saved_data == dst.data_.size())
+		{
+			dst.tags_.pop_back();
+		}
+		return tag_index;
+	}
+
+	uint32 LoadStructure(DataTemplate& dst, const Structure& structure, const DataTemplate& src, uint32 tag_index)
+	{
+		if (tag_index < src.tags_.size())
+		{
+			const Tag first_tag = src.tags_[tag_index];
+			while (tag_index < src.tags_.size())
+			{
+				const Tag tag = src.tags_[tag_index];
+				if (tag.GetNestLevel() == first_tag.GetNestLevel() && tag.GetElementIndex() == first_tag.GetElementIndex() && tag.IsKey() == first_tag.IsKey()
+					&& structure.id_ == tag.GetStructID())
+				{
+					if (kSuperStructPropertyID == tag.GetPropertyID())
+					{
+						tag_index++;
+						const Structure* super_struct = structure.TryGetSuperStructure();
+						if (super_struct)
+						{
+							const uint32 saved_data = dst.data_.size();
+							dst.tags_.emplace_back(Tag(structure.id_, kSuperStructPropertyID, kSuperStructPropertyIndex, 0, MemberFieldType::Struct
+								, saved_data, tag.GetNestLevel(), 0, 0));
+							tag_index = LoadStructure(dst, *super_struct, src, tag_index);
+							if (saved_data == dst.data_.size())
+							{
+								dst.tags_.pop_back();
+							}
+						}
+						else
+						{
+							ErrorStream() << "Error layout_changed::LoadStructure - unknown super struct \n";
+						}
+					}
+					else
+					{
+						tag_index = LoadValue(dst, structure, src, tag_index);
+					}
+				}
+				else if (tag.GetNestLevel() < first_tag.GetNestLevel())
+				{
+					break;
+				}
+				else
+				{
+					if (structure.id_ != tag.GetStructID())
+					{
+						const Structure* actual_struct = Structure::TryGetStructure(tag.GetStructID());
+						ErrorStream() << "Error layout_changed::LoadStructure - expected structure: '" << structure.GetName() << "' actual structure: '"
+							<< (actual_struct ? actual_struct->GetName().c_str() : "unknown") << '\n';
+					}
+					tag_index++;
+				}
+			}
+		}
+		return tag_index;
+	}
+};
+
+void serialization::DataTemplate::RefreshAfterLayoutChanged(const StructID struct_id)
+{
+	Assert(kWrongID != struct_id);
+	structure_id_ = kWrongID;
+
+	const auto& structure = Structure::GetStructure(struct_id);
+	Assert(structure.RepresentsObjectClass() && structure.Validate());
+
+	DataTemplate refreshed_dt;
+	refreshed_dt.structure_id_ = struct_id;
+
+	layout_changed::LoadStructure(refreshed_dt, structure, *this, 0);
+
+	*this = refreshed_dt;
 }
 
 void serialization::DataTemplate::CloneFrom(const DataTemplate& src)

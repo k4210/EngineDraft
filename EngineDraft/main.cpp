@@ -21,8 +21,7 @@ struct StructSample
 
 	static reflection::Structure& StaticRegisterStructure()
 	{
-		auto& structure = reflection::Structure::CreateStructure(StaticGetReflectionStructureID());
-		structure.size_ = sizeof(StructSample);
+		auto& structure = reflection::Structure::CreateStructure(StaticGetReflectionStructureID(), sizeof(StructSample));
 		DEFINE_PROPERTY(StructSample, integer_);
 		return structure;
 	}
@@ -65,9 +64,7 @@ public:
 
 	static reflection::Structure& StaticRegisterStructure()
 	{
-		auto& structure = reflection::Structure::CreateStructure(StaticGetReflectionStructureID());
-		structure.super_id_ = reflection::Object::StaticGetReflectionStructureID();
-		structure.size_ = sizeof(ObjSample);
+		auto& structure = reflection::Structure::CreateStructure(StaticGetReflectionStructureID(), sizeof(ObjSample), reflection::Object::StaticGetReflectionStructureID());
 		structure.get_obj_id = GetObjectID_Stub;
 		structure.obj_from_id = GetObjectFromID_Stub;
 		DEFINE_PROPERTY(ObjSample, string_);
@@ -94,10 +91,7 @@ public:
 
 	static reflection::Structure& StaticRegisterStructure()
 	{
-		auto& structure = reflection::Structure::CreateStructure(StaticGetReflectionStructureID());
-		structure.super_id_ = reflection::Object::StaticGetReflectionStructureID();
-		structure.size_ = sizeof(ObjAdvanced);
-		structure.super_id_ = ObjSample::StaticGetReflectionStructureID();
+		auto& structure = reflection::Structure::CreateStructure(StaticGetReflectionStructureID(), sizeof(ObjAdvanced), ObjSample::StaticGetReflectionStructureID());
 		structure.get_obj_id = GetObjectID_Stub;
 		structure.obj_from_id = GetObjectFromID_Stub;
 		DEFINE_PROPERTY(ObjAdvanced, adv_string_);
@@ -132,12 +126,11 @@ void PrintStructure(const reflection::Structure& structure, bool print_label)
 		PrintStructure(*super_struct, false);
 	}
 
-	uint32 i = 0;
-	for (auto& p : structure.properties_)
+	
+	for (reflection::PropertyIndex i = 0; i < structure.GetNumberOfProperties(); i++)
 	{
 		std::cout << std::setfill(' ') << std::setw(4) << i << ' ';
-		std::cout << p.ToString();
-		i++;
+		std::cout << structure.GetProperty(i).ToString();
 	}
 	if (print_label)
 	{
@@ -163,16 +156,26 @@ int main()
 			obj.map_[StructSample(2)] = 8;
 			obj.map_[StructSample(3)] = 16;
 
-			data_template.Save(&obj, serialization::SaveFlags::SaveNativeDefaultValues);
+			data_template.Save(&obj, serialization::SaveFlags::SaveNativeDefaultValues);//Flag32<serialization::SaveFlags>());// 
 			PrintDataTemplate(data_template);
-		}
 
+			std::cout.flush();
+			out.flush();
+
+			data_template.RefreshAfterLayoutChanged(obj.GetReflectionStructureID());
+			PrintDataTemplate(data_template);
+
+			std::cout.flush();
+			out.flush();
+		}
+		/*
 		ObjAdvanced obj_clone;
 		data_template.Load(&obj_clone);
 
 		serialization::DataTemplate data_template_clone;
-		data_template_clone.Save(&obj_clone, serialization::SaveFlags::SaveNativeDefaultValues);
+		data_template_clone.Save(&obj_clone, serialization::SaveFlags::SaveNativeDefaultValues);//Flag32<serialization::SaveFlags>());//
 		PrintDataTemplate(data_template_clone);
+		*/
 	}
 	std::cout.rdbuf(coutbuf); //reset to standard output again
 
