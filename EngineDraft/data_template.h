@@ -11,7 +11,7 @@ namespace serialization
 	class Tag
 	{
 		// Redundant fields are needed to restore data after layout was changed
-		StructID struct_id_ = kWrongID;		// redundant
+		StructID struct_id_ = kWrongID;		// ~redundant
 		PropertyID property_id_ = kWrongID;	// redundant
 
 		uint32 byte_offset_ : 16;
@@ -72,15 +72,16 @@ namespace serialization
 		std::vector<uint8> data_;
 		StructID structure_id_ = kWrongID;
 
+		uint32 TagNum() const { return tags_.size(); }
+
 		void Save(const Object* obj, const Flag32<SaveFlags> flags);
 		void Load(Object* obj) const;
 
 		void CloneFrom(const DataTemplate& src);
-		void Diff(const DataTemplate& lower_dt); //substract lower_dt
-		void Merge(const DataTemplate& higher_dt); // Add higher_dt
-
 		void RefreshAfterLayoutChanged(const StructID struct_id);
 
+		static DataTemplate Merge(const DataTemplate& lower_dt, const DataTemplate& higher_dt);
+		void Diff(const DataTemplate& lower_dt); //substract lower_dt
 	private:
 		bool SaveStructure(	const uint8* const src, const Structure& structure,										const uint32 nest_level, const Flag32<SaveFlags> flags);
 		bool SaveArray(		const uint8* const src, const Structure& structure, const PropertyIndex property_index,	const uint32 nest_level, const Flag32<SaveFlags> flags);

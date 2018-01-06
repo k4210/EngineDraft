@@ -427,7 +427,8 @@ namespace layout_changed
 		const auto& property = structure.GetProperty(main_property_index + tag.GetSubPropertyOffset());
 		const PropertyIndex element_property_index = structure.GetSubPropertyIndex(main_property_index + tag.GetSubPropertyOffset(), ESubType::Array_Element);
 		const SubPropertyOffset element_property_offset = element_property_index - main_property_index;
-		while (tag_index < src.tags_.size())
+
+		while (tag_index < src.TagNum())
 		{
 			const Tag inner_tag = src.tags_[tag_index];
 			if (inner_tag.GetNestLevel() <= tag.GetNestLevel())
@@ -460,7 +461,8 @@ namespace layout_changed
 		const SubPropertyOffset element_property_offset = element_property_index - main_property_index;
 		const uint32 size = GetConstRef<uint16>(src.data_.data(), tag.GetDataOffset());
 		SaveLength16(dst.data_, size, Flag32<SaveFlags>());
-		while (tag_index < src.tags_.size())
+
+		while (tag_index < src.TagNum())
 		{
 			const Tag inner_tag = src.tags_[tag_index];
 			if (inner_tag.GetNestLevel() <= tag.GetNestLevel())
@@ -498,7 +500,7 @@ namespace layout_changed
 		const SubPropertyOffset value_property_offset = value_property_index - main_property_index;
 		const uint32 map_size = GetConstRef<uint16>(src.data_.data(), tag.GetDataOffset()); //number of keys
 		SaveLength16(dst.data_, map_size, Flag32<SaveFlags>());
-		while (tag_index < src.tags_.size())
+		while (tag_index < src.TagNum())
 		{
 			const Tag inner_tag = src.tags_[tag_index];
 			if (inner_tag.GetNestLevel() <= tag.GetNestLevel())
@@ -585,10 +587,10 @@ namespace layout_changed
 
 	uint32 LoadStructure(DataTemplate& dst, const Structure& structure, const DataTemplate& src, uint32 tag_index)
 	{
-		if (tag_index < src.tags_.size())
+		if (tag_index < src.TagNum())
 		{
 			const Tag first_tag = src.tags_[tag_index];
-			while (tag_index < src.tags_.size())
+			while (tag_index < src.TagNum())
 			{
 				const Tag tag = src.tags_[tag_index];
 				if (tag.GetNestLevel() == first_tag.GetNestLevel() && tag.GetElementIndex() == first_tag.GetElementIndex() && tag.IsKey() == first_tag.IsKey()
@@ -671,7 +673,221 @@ void serialization::DataTemplate::Diff(const DataTemplate&)
 	Assert(false);
 }
 
-void serialization::DataTemplate::Merge(const DataTemplate&)
+namespace merge
 {
-	Assert(false);
+	using namespace serialization;
+	using layout_changed::LoadSimpleValue;
+
+	bool TagsEqual(const Tag a, const Tag b)
+	{
+		Assert(a.GetStructID() == b.GetStructID());
+
+		const bool are_equal =
+			a.GetPropertyIndex() == b.GetPropertyIndex() &&
+			a.GetElementIndex() == b.GetElementIndex() &&
+			a.IsKey() == b.IsKey();
+		if (are_equal)
+		{
+			Assert(a.GetFieldType() == b.GetFieldType());
+			Assert(a.GetPropertyID() == b.GetPropertyID());
+			Assert(a.GetSubPropertyOffset() == b.GetSubPropertyOffset());
+		}
+		return are_equal;
+	}
+
+	//returns if a goes before b
+	bool IsTagFirst(const Tag a, const Tag b)
+	{
+		Assert(a.GetStructID() == b.GetStructID());
+
+		if (a.GetPropertyIndex() == b.GetPropertyIndex())
+		{
+			if (a.GetElementIndex() < b.GetElementIndex())
+				return true;
+			if ((a.GetElementIndex() == b.GetElementIndex()) && a.IsKey() && !b.IsKey())
+				return true;
+
+			return false;
+		}
+		if (a.GetPropertyIndex() == kSuperStructPropertyIndex)
+			return true;
+		if (b.GetPropertyIndex() == kSuperStructPropertyIndex)
+			return false;
+		return a.GetPropertyIndex() < b.GetPropertyIndex();
+	}
+
+	void CopySingleTagUnchecked(DataTemplate& dst, const DataTemplate& src, const uint32 tag_index, const uint32 nest_lvl_offset)
+	{
+		const Tag tag = src.tags_[tag_index];
+		dst.tags_.emplace_back(Tag(tag.GetStructID(), tag.GetPropertyID(), tag.GetPropertyIndex(), tag.GetSubPropertyOffset(),
+			tag.GetFieldType(), dst.data_.size(), tag.GetNestLevel() + nest_lvl_offset, tag.GetElementIndex(), tag.IsKey() ? 1 : 0));
+
+		const uint32 src_data_chunk_end = (src.TagNum() > (tag_index + 1)) ? src.tags_[tag_index + 1].GetDataOffset() : src.data_.size();
+		std::copy(src.data_.begin() + tag.GetDataOffset(), src.data_.begin() + src_data_chunk_end, std::back_inserter(dst.data_));
+	}
+
+	void CopyNestedTags(DataTemplate& dst, const DataTemplate& src, uint32& tag_index, const uint32 nest_lvl_offset)
+	{
+		if (src.TagNum() <= tag_index)
+			return;
+		const uint32 min_nest_level = src.tags_[tag_index].GetNestLevel();
+		do
+		{
+			CopySingleTagUnchecked(dst, src, tag_index, nest_lvl_offset);
+			tag_index++;
+
+		} while ((tag_index < src.TagNum()) && (src.tags_[tag_index].GetNestLevel() > min_nest_level));
+	}
+
+	void SkipNestedTags(const DataTemplate& src, uint32& tag_index)
+	{
+		if (src.TagNum() <= tag_index)
+			return;
+		const uint32 min_nest_level = src.tags_[tag_index].GetNestLevel();
+		do {
+			tag_index++;
+		} while ((tag_index < src.TagNum()) && (src.tags_[tag_index].GetNestLevel() > min_nest_level));
+	}
+
+	void Merge(DataTemplate& dst, const Structure& structure, const DataTemplate& lower_dt, const DataTemplate& higher_dt
+		, uint32& lower_tag_index, uint32& higher_tag_index, const uint32 nest_lvl_offset, const uint32 max_size);
+
+	void MergeValue(DataTemplate& dst, const Structure& structure, const DataTemplate& lower_dt, const DataTemplate& higher_dt
+		, uint32& lower_tag_index, uint32& higher_tag_index, const uint32 nest_lvl_offset)
+	{
+		if (lower_tag_index >= lower_dt.TagNum() || higher_tag_index >= higher_dt.TagNum())
+			return;
+		const Tag tag = higher_dt.tags_[higher_tag_index];
+		Assert(TagsEqual(lower_dt.tags_[lower_tag_index], tag));
+		higher_tag_index++;
+		lower_tag_index++;
+		const auto& property = structure.GetProperty(tag.GetPropertyIndex());
+		dst.tags_.emplace_back(Tag(structure.id_, property.GetPropertyID(), tag.GetPropertyIndex(), tag.GetSubPropertyOffset(),
+			property.GetFieldType(), dst.data_.size(), tag.GetNestLevel(), tag.GetElementIndex(), tag.IsKey() ? 1 : 0));
+		switch (property.GetFieldType())
+		{
+			case MemberFieldType::Int8:		LoadSimpleValue<uint8>(dst, higher_dt.data_.data(), tag.GetDataOffset());	break;
+			case MemberFieldType::Int16:	LoadSimpleValue<int16>(dst, higher_dt.data_.data(), tag.GetDataOffset());	break;
+			case MemberFieldType::Int32:	LoadSimpleValue<int32>(dst, higher_dt.data_.data(), tag.GetDataOffset());	break;
+			case MemberFieldType::Int64:	LoadSimpleValue<int64>(dst, higher_dt.data_.data(), tag.GetDataOffset());	break;
+			case MemberFieldType::UInt8:	LoadSimpleValue<uint8>(dst, higher_dt.data_.data(), tag.GetDataOffset());	break;
+			case MemberFieldType::UInt16:	LoadSimpleValue<uint16>(dst, higher_dt.data_.data(), tag.GetDataOffset());	break;
+			case MemberFieldType::UInt32:	LoadSimpleValue<uint32>(dst, higher_dt.data_.data(), tag.GetDataOffset());	break;
+			case MemberFieldType::UInt64:	LoadSimpleValue<uint64>(dst, higher_dt.data_.data(), tag.GetDataOffset());	break;
+			case MemberFieldType::Float:	LoadSimpleValue<float>(dst, higher_dt.data_.data(), tag.GetDataOffset());	break;
+			case MemberFieldType::Double:	LoadSimpleValue<double>(dst, higher_dt.data_.data(), tag.GetDataOffset());	break;
+			case MemberFieldType::String:	LoadSimpleValue<std::string>(dst, higher_dt.data_.data(), tag.GetDataOffset());	break;
+			case MemberFieldType::ObjectPtr:LoadSimpleValue<Object*>(dst, higher_dt.data_.data(), tag.GetDataOffset());		break;
+
+			case MemberFieldType::Array:	Merge(dst, structure, lower_dt, higher_dt, lower_tag_index, higher_tag_index
+				, nest_lvl_offset, property.GetArraySize());
+			case MemberFieldType::Vector:
+			case MemberFieldType::Map:
+			{
+				const uint32 size = GetConstRef<uint16>(higher_dt.data_.data(), tag.GetDataOffset());
+				SaveLength16(dst.data_, size, Flag32<SaveFlags>());
+				Merge(dst, structure, lower_dt, higher_dt, lower_tag_index, higher_tag_index, nest_lvl_offset, size);
+				break;
+			} 
+			case MemberFieldType::Struct:	Merge(dst, Structure::GetStructure(property.GetOptionalStructID())
+				, lower_dt, higher_dt, lower_tag_index, higher_tag_index, nest_lvl_offset, 1);	break;
+		}
+	}
+
+	void Merge(DataTemplate& dst, const Structure& structure, const DataTemplate& lower_dt, const DataTemplate& higher_dt
+		, uint32& lower_tag_index, uint32& higher_tag_index, const uint32 nest_lvl_offset, const uint32 max_size)
+	{
+		if (lower_tag_index >= lower_dt.TagNum() || higher_tag_index >= higher_dt.TagNum())
+			return;
+		const uint32 lower_nest_lvl = lower_dt.tags_[lower_tag_index].GetNestLevel();
+		{
+			const Tag higher_tag = higher_dt.tags_[higher_tag_index];
+			const Tag lower_tag = lower_dt.tags_[lower_tag_index];
+			Assert(lower_tag.GetNestLevel() + nest_lvl_offset == higher_tag.GetNestLevel());	// ok
+			Assert(lower_tag.GetStructID() == higher_tag.GetStructID());	// ??
+			Assert(lower_tag.GetStructID() == structure.id_);
+		}
+		do
+		{
+			const Tag higher_tag = higher_dt.tags_[higher_tag_index];
+			const Tag lower_tag = lower_dt.tags_[lower_tag_index];
+			Assert(lower_tag.GetNestLevel() <= lower_nest_lvl);
+			Assert(higher_tag.GetNestLevel() <= (lower_nest_lvl + nest_lvl_offset));
+			const bool lower_in_struct = (lower_tag.GetNestLevel() == lower_nest_lvl) && (lower_tag.GetStructID() == structure.id_);
+			const bool higher_in_struct = (higher_tag.GetNestLevel() == (lower_nest_lvl + nest_lvl_offset)) && (higher_tag.GetStructID() == structure.id_);
+			if (lower_in_struct && higher_in_struct && TagsEqual(lower_tag, higher_tag))
+			{
+				MergeValue(dst, structure, lower_dt, higher_dt, lower_tag_index, higher_tag_index, nest_lvl_offset);
+			}
+			else if (lower_in_struct && (!higher_in_struct || IsTagFirst(lower_tag, higher_tag)))
+			{
+				if (lower_tag.GetElementIndex() >= max_size)
+				{
+					SkipNestedTags(lower_dt, lower_tag_index);
+				}
+				else
+				{
+					CopyNestedTags(dst, lower_dt, lower_tag_index, nest_lvl_offset);
+				}
+			}
+			else if(higher_in_struct && (!lower_in_struct || IsTagFirst(higher_tag, lower_tag)))
+			{
+				CopyNestedTags(dst, higher_dt, higher_tag_index, 0);
+			}
+			else
+			{
+				Assert(!higher_in_struct && !lower_in_struct);
+				break;
+			}
+		} while (lower_tag_index < lower_dt.TagNum() && higher_tag_index < higher_dt.TagNum());
+	}
+}
+
+DataTemplate serialization::DataTemplate::Merge(const DataTemplate& lower_dt, const DataTemplate& higher_dt)
+{
+	Assert(kWrongID != lower_dt.structure_id_);
+	Assert(kWrongID != higher_dt.structure_id_);
+	Assert(Structure::GetStructure(higher_dt.structure_id_).IsBasedOn(lower_dt.structure_id_));
+
+	DataTemplate dst;
+	dst.structure_id_ = higher_dt.structure_id_;
+	dst.tags_.reserve(std::max(higher_dt.TagNum(), lower_dt.TagNum()));
+	dst.data_.reserve(std::max(higher_dt.data_.size(), lower_dt.data_.size()));
+
+	uint32 lower_tag_index = 0, higher_tag_index = 0;
+	uint32 nest_lvl_offset = 0;
+	if (lower_tag_index < lower_dt.TagNum() && higher_tag_index < higher_dt.TagNum())
+	{
+		const StructID lower_struct_id = lower_dt.structure_id_;
+		StructID higher_struct_id = higher_dt.structure_id_;
+		while (higher_struct_id != lower_struct_id)
+		{
+			Assert(kWrongID != higher_struct_id);
+			const Tag super_struct_high = higher_dt.tags_[higher_tag_index];
+			Assert(super_struct_high.GetPropertyID() == kSuperStructPropertyID);
+			Assert(super_struct_high.GetPropertyIndex() == kSuperStructPropertyIndex);
+			Assert(super_struct_high.GetStructID() == higher_struct_id);
+			Assert(super_struct_high.GetNestLevel() == nest_lvl_offset);
+			higher_struct_id = Structure::GetStructure(higher_struct_id).super_id_;
+
+			//emplace tag in dest
+
+			higher_tag_index++;
+			nest_lvl_offset++;
+		}
+		higher_tag_index++;
+		lower_tag_index++;
+		merge::Merge(dst, Structure::GetStructure(lower_struct_id), lower_dt, higher_dt, lower_tag_index, higher_tag_index, nest_lvl_offset, 1);
+	}
+
+	for (; lower_tag_index < lower_dt.TagNum(); lower_tag_index++)
+	{
+		merge::CopySingleTagUnchecked(dst, lower_dt, lower_tag_index, nest_lvl_offset);
+	}
+	for (; higher_tag_index < higher_dt.TagNum(); higher_tag_index++)
+	{
+		merge::CopySingleTagUnchecked(dst, higher_dt, higher_tag_index, 0);
+	}
+
+	return dst;
 }

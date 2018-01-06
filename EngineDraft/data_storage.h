@@ -123,7 +123,7 @@ namespace serialization
 
 		const uint32 inner_property_index = structure.GetSubPropertyIndex(tag.GetPropertyIndex()
 			, (upper_property.GetFieldType() == MemberFieldType::Array) ? ESubType::Array_Element : ESubType::Vector_Element);
-		while (tag_index < data_template.tags_.size())
+		while (tag_index < data_template.TagNum())
 		{
 			const Tag inner_tag = data_template.tags_[tag_index];
 			if (upper_property.GetFieldType() == MemberFieldType::Array)
@@ -150,7 +150,7 @@ namespace serialization
 		writer.Key("length");
 		writer.Uint(map_size);
 
-		while (tag_index < data_template.tags_.size())
+		while (tag_index < data_template.TagNum())
 		{
 			const Tag inner_tag = data_template.tags_[tag_index];
 			if (inner_tag.GetNestLevel() != tag.GetNestLevel() + 1)
@@ -214,10 +214,10 @@ namespace serialization
 		writer.Uint(structure.id_);
 		writer.Key("struct_name");
 		writer.String(structure.GetName());
-		if (tag_index < data_template.tags_.size())
+		if (tag_index < data_template.TagNum())
 		{
 			const Tag first_tag = data_template.tags_[tag_index];
-			while (tag_index < data_template.tags_.size())
+			while (tag_index < data_template.TagNum())
 			{
 				const Tag tag = data_template.tags_[tag_index];
 				Assert(tag.GetNestLevel() <= first_tag.GetNestLevel());
@@ -244,7 +244,7 @@ namespace serialization
 		const Structure& structure = Structure::GetStructure(data_template.structure_id_);
 		const uint32 saved_tags = SaveStruct<Writer>(writer, structure, data_template, 0);
 
-		Assert(saved_tags == data_template.tags_.size());
+		Assert(saved_tags == data_template.TagNum());
 		writer.EndObject();
 	}
 };
