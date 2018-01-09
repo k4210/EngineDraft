@@ -77,6 +77,13 @@ public:
 		data &= ~static_cast<uint32>(v);
 	}
 
+	static Flag32 Remove(const Flag32 f, E v)
+	{
+		Flag32 n = f;
+		n.Remove(v);
+		return n;
+	}
+
 	void Reset()
 	{
 		data = 0;

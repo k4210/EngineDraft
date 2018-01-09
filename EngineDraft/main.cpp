@@ -144,7 +144,7 @@ int main()
 	std::streambuf *coutbuf = std::cout.rdbuf(); //save old buf
 	std::cout.rdbuf(out.rdbuf()); //redirect std::cout to out.txt!
 	{
-		serialization::DataTemplate data_template;
+		serialization::DataTemplate data_template; //higher
 		{
 			ObjAdvanced obj;
 			PrintStructure(reflection::Structure::GetStructure(obj.GetReflectionStructureID()), true);
@@ -156,26 +156,35 @@ int main()
 			obj.map_[StructSample(2)] = 8;
 			obj.map_[StructSample(3)] = 16;
 
-			data_template.Save(&obj, serialization::SaveFlags::SaveNativeDefaultValues);//Flag32<serialization::SaveFlags>());// 
+			data_template.Save(&obj, serialization::SaveFlags::None);
 			PrintDataTemplate(data_template);
 
 			std::cout.flush();
 			out.flush();
 
-			data_template.RefreshAfterLayoutChanged(obj.GetReflectionStructureID());
-			PrintDataTemplate(data_template);
+			//data_template.RefreshAfterLayoutChanged(obj.GetReflectionStructureID());
+			//PrintDataTemplate(data_template);
 
-			std::cout.flush();
-			out.flush();
+			//std::cout.flush();
+			//out.flush();
 		}
-		/*
-		ObjAdvanced obj_clone;
-		data_template.Load(&obj_clone);
+		
+		//ObjAdvanced obj_clone;
+		//data_template.Load(&obj_clone);
 
-		serialization::DataTemplate data_template_clone;
-		data_template_clone.Save(&obj_clone, serialization::SaveFlags::SaveNativeDefaultValues);//Flag32<serialization::SaveFlags>());//
-		PrintDataTemplate(data_template_clone);
-		*/
+		serialization::DataTemplate data_template_lower; //higher
+		{
+			ObjSample obj;
+			obj.string_ = "lower_value";
+			data_template_lower.Save(&obj, serialization::SaveFlags::None);
+			PrintDataTemplate(data_template_lower);
+		}
+
+		//const serialization::DataTemplate data_template_clone = data_template.Clone();
+		//data_template_clone.Save(&obj_clone, serialization::SaveFlags::None);//Flag32<serialization::SaveFlags>());//
+		const serialization::DataTemplate data_template_diff = serialization::DataTemplate::Diff(data_template, data_template_lower);
+		PrintDataTemplate(data_template_diff);
+		
 	}
 	std::cout.rdbuf(coutbuf); //reset to standard output again
 

@@ -63,7 +63,8 @@ namespace serialization
 
 	enum SaveFlags : uint32
 	{
-		SaveNativeDefaultValues = 1 << 0,
+		None = 0,
+		SkipNativeDefaultValues = 1 << 0,
 	};
 
 	struct DataTemplate
@@ -77,23 +78,10 @@ namespace serialization
 		void Save(const Object* obj, const Flag32<SaveFlags> flags);
 		void Load(Object* obj) const;
 
-		void CloneFrom(const DataTemplate& src);
+		DataTemplate Clone() const;
 		void RefreshAfterLayoutChanged(const StructID struct_id);
 
-		static DataTemplate Merge(const DataTemplate& lower_dt, const DataTemplate& higher_dt);
-		void Diff(const DataTemplate& lower_dt); //substract lower_dt
-	private:
-		bool SaveStructure(	const uint8* const src, const Structure& structure,										const uint32 nest_level, const Flag32<SaveFlags> flags);
-		bool SaveArray(		const uint8* const src, const Structure& structure, const PropertyIndex property_index,	const uint32 nest_level, const Flag32<SaveFlags> flags);
-		bool SaveVector(	const uint8* const src, const Structure& structure, const PropertyIndex property_index,	const uint32 nest_level, const Flag32<SaveFlags> flags);
-		bool SaveMap(		const uint8* const src, const Structure& structure, const PropertyIndex property_index,	const uint32 nest_level, const Flag32<SaveFlags> flags);
-		bool SaveValue(		const uint8* const src, const Structure& structure, const PropertyIndex property_index,	const uint32 nest_level, const Flag32<SaveFlags> flags
-			, const uint32 element_index = 0, const bool is_key = false);
-
-		uint32 LoadStructure(const Structure& structure, uint8* dst, uint32 tag_index) const;
-		uint32 LoadValue(const Structure& structure, uint8* dst, uint32 tag_index) const;
-		uint32 LoadArray(const Structure& structure, uint8* dst, const Tag array_tag, uint32 tag_index) const;
-		uint32 LoadVector(const Structure& structure, uint8* dst, const Tag vector_tag, uint32 tag_index) const;
-		uint32 LoadMap(const Structure& structure, uint8* dst, const Tag map_tag, uint32 tag_index) const;
+		static DataTemplate Merge(const DataTemplate& lower_dt, const DataTemplate& higher_dt); // 
+		static DataTemplate Diff(const DataTemplate& higher_dt, const DataTemplate& lower_dt); //= higher_dt - lower_dt
 	};
 }
