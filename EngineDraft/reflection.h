@@ -243,11 +243,6 @@ namespace reflection
 			DEBUG_ONLY(return name_);
 		}
 
-		typedef ObjectID(*GetCustomObjID)(const Object* obj);
-		GetCustomObjID get_obj_id = nullptr;
-		typedef Object* (*ObjFromID)(ObjectID);
-		ObjFromID obj_from_id = nullptr;
-
 		static Structure& CreateStructure(const StructID id, const uint32 size, const StructID super_id = kWrongID);
 		static const Structure& GetStructure(const StructID id);
 		static const Structure* TryGetStructure(const StructID id);
@@ -367,14 +362,12 @@ namespace reflection
 
 		bool RepresentsObjectClass() const
 		{
-			return nullptr != get_obj_id && nullptr != obj_from_id && kWrongID != super_id_;
+			return kWrongID != super_id_;
 		}
 
 		bool RepresentNonObjectStructure() const
 		{
-			return nullptr == get_obj_id 
-				&& nullptr == obj_from_id 
-				&& kWrongID == super_id_
+			return kWrongID == super_id_
 				&& !properties_.empty();
 		}
 
@@ -632,17 +625,17 @@ namespace reflection
 	const char* ToStr(EPropertyUsage e);
 }
 
-#define IMPLEMENT_VIRTUAL_REFLECTION(name) static reflection::StructID StaticGetReflectionStructureID() \
+#define IMPLEMENT_VIRTUAL_REFLECTION(name) public: static reflection::StructID StaticGetReflectionStructureID() \
 	{ return HashString32(#name); } \
 	reflection::StructID GetReflectionStructureID() const override \
 	{ return StaticGetReflectionStructureID(); }
 
-#define IMPLEMENT_STATIC_REFLECTION(name) static reflection::StructID StaticGetReflectionStructureID() \
+#define IMPLEMENT_STATIC_REFLECTION(name) public: static reflection::StructID StaticGetReflectionStructureID() \
 	{ return HashString32(#name); } \
 	static const reflection::Structure& StaticGetReflectionStructure() \
 	{ return reflection::Structure::GetStructure(StaticGetReflectionStructureID()); }
 
-#define REGISTER_STRUCTURE(name) reflection::details::RegisterStruct<name> UNIQUE_NAME(RegisterStruct) \
+#define REGISTER_STRUCTURE(name) reflection::details::RegisterStruct<name> UNIQUE_NAME_(RegisterStruct) \
 	DEBUG_ONLY((#name));
 
 #define DEFINE_PROPERTY(struct_name, field_name) reflection::details::CreateProperty<decltype(field_name)>(structure, \

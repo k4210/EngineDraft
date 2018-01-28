@@ -44,14 +44,11 @@ namespace serialization
 		template <typename Writer> void SaveTagSuperStruct(Writer& writer, const Tag tag);
 	public:
 		template <typename Writer> void Save(Writer& writer, const DataTemplate& data_template);
-
-		virtual ~JsonDataStorage() = default;
 	};
 
 	template <typename Writer> void JsonDataStorage::SaveTagSuperStruct(Writer& writer, const Tag tag)
 	{
 		Assert(tag.GetPropertyIndex() == kSuperStructPropertyIndex);
-		Assert(tag.GetDataOffset() == 0);
 		writer.Key("tag");
 		std::stringstream str;
 		str << "property_id: " << "super-struct"
@@ -241,7 +238,7 @@ namespace serialization
 	template <typename Writer> void JsonDataStorage::Save(Writer& writer, const DataTemplate& data_template)
 	{
 		writer.StartObject();
-		const Structure& structure = Structure::GetStructure(data_template.structure_id_);
+		const Structure& structure = Structure::GetStructure(data_template.GetStructID());
 		const uint32 saved_tags = SaveStruct<Writer>(writer, structure, data_template, 0);
 
 		Assert(saved_tags == data_template.TagNum());

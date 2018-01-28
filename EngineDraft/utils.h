@@ -3,7 +3,9 @@
 #include <type_traits>
 #include <vector>
 #include <map>
+#include <memory>
 #include <iostream>
+#include <windows.h>
 #include "basic_types.h"
 
 
@@ -18,13 +20,10 @@
 
 #define DEBUG_ONLY(x) x
 #define Assert assert
-#if !defined(UNREFERENCED_PARAMETER)
-#define UNREFERENCED_PARAMETER(x) ((void)x)
-#endif
 
-#define CONCATENATE_DETAIL(x, y) x##y
-#define CONCATENATE(x, y) CONCATENATE_DETAIL(x, y)
-#define UNIQUE_NAME(n) CONCATENATE(n, __COUNTER__)
+#define CONCATENATE_DETAIL_(x, y) x##y
+#define CONCATENATE_(x, y) CONCATENATE_DETAIL_(x, y)
+#define UNIQUE_NAME_(n) CONCATENATE_(n, __COUNTER__)
 
 
 template<typename E>
@@ -105,6 +104,21 @@ public:
 		Add(tail...);
 	}
 };
+
+template<typename E>
+std::istream& operator>> (std::istream& is, Flag32<E>& flags)
+{
+	uint32 flag_raw_data = 0;
+	is >> flag_raw_data;
+	flags = Flag32<E>(flag_raw_data);
+	return is;
+}
+template<typename E>
+std::ostream& operator<< (std::ostream& os, const Flag32<E>& flag)
+{
+	os << flag.GetRawData();
+	return os;
+}
 
 template<typename E>
 inline Flag32<E> operator|(E a, E b) { return Flag32<E>(a, b); }

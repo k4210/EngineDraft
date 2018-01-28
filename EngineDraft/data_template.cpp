@@ -28,8 +28,10 @@ namespace
 		const StructID struct_id = GetConstRef<StructID>(src, src_offset);
 		const auto& structure = Structure::GetStructure(struct_id);
 		const ObjectID object_id = GetConstRef<ObjectID>(src, src_offset + sizeof(StructID));
-		Object* obj = structure.obj_from_id(object_id);
-		GetRef<Object*>(dst, 0) = obj;
+
+		//TODO
+		//Object* obj = structure.obj_from_id(object_id);
+		GetRef<Object*>(dst, 0) = nullptr;
 	}
 
 	template<> void LoadSimpleValue<std::string>(uint8* const dst, const uint8* const src, const uint32 src_offset)
@@ -39,6 +41,62 @@ namespace
 		GetRef<std::string>(dst, 0) = std::string(c_str, len);
 	}
 };
+
+StructID serialization::DataTemplate::GetStructID() const
+{
+	return (data_.size() > sizeof(StructID)) ? GetConstRef<StructID>(data_.data(), 0) : kWrongID;
+}
+
+static_assert(sizeof(serialization::Tag) == 3 * sizeof(uint32));
+std::istream& serialization::operator>> (std::istream& is, Tag& t)
+{
+	uint32* ptr = reinterpret_cast<uint32*>(&t);
+	is >> ptr[0] >> ptr[1] >> ptr[2];
+	return is;
+}
+
+std::ostream& serialization::operator<< (std::ostream& os, const Tag& t)
+{
+	const uint32* ptr = reinterpret_cast<const uint32*>(&t);
+	os << ptr[0] << ptr[1] << ptr[2];
+	return os;
+}
+
+std::istream& serialization::operator>> (std::istream& is, serialization::DataTemplate& dt)
+{
+	uint32 tags_num = 0;
+	uint32 data_size = 0;
+	is >> tags_num >> data_size;
+	Assert(dt.tags_.empty());
+	dt.tags_.resize(tags_num);
+	for (uint32 i = 0; i < tags_num; i++)
+	{
+		is >> dt.tags_[i];
+	}
+	Assert(dt.data_.empty());
+	dt.data_.resize(data_size);
+	for (uint32 i = 0; i < data_size; i++)
+	{
+		is >> dt.data_[i];
+	}
+	return is;
+}
+
+std::ostream& serialization::operator<< (std::ostream& os, const serialization::DataTemplate& dt)
+{
+	const uint32 tags_num = dt.tags_.size();
+	const uint32 data_size = dt.data_.size();
+	os << tags_num << data_size;
+	for (const auto& tag : dt.tags_)
+	{
+		os << tag;
+	}
+	for (const uint8 v : dt.data_)
+	{
+		os << v;
+	}
+	return os;
+}
 
 namespace save
 {
@@ -82,7 +140,7 @@ namespace save
 		{
 			const auto& structure = Structure::GetStructure(obj->GetReflectionStructureID());
 			Assert(structure.RepresentsObjectClass());
-			obj_id = structure.get_obj_id(obj);
+			obj_id = kWrongID; //structure.get_obj_id(obj);
 		}
 
 		if ((kNullObjectID == obj_id) && flags[SaveFlags::SkipNativeDefaultValues])
@@ -106,16 +164,26 @@ namespace save
 		return true;
 	}
 
+	static void SaveStructId(std::vector<uint8>& dst, StructID struct_id)
+	{
+		const uint32 dst_offset = dst.size();
+		dst.resize(dst_offset + sizeof(StructID));
+		GetRef<StructID>(dst.data(), dst_offset) = struct_id;
+	}
+
 	bool SaveValue(const uint8* const src, DataTemplate& dst, const Structure& structure
 		, const PropertyIndex property_index, const uint32 nest_level, const Flag32<SaveFlags> flags
 		, const uint32 element_index = 0, const bool is_key = 0);
 	bool SaveStructure(const uint8* const src, DataTemplate& dst
 		, const Structure& structure, const uint32 nest_level, const Flag32<SaveFlags> flags)
 	{
+		const auto old_dst_size = dst.data_.size();
 		bool was_saved = false;
+		SaveStructId(dst.data_, structure.id_);
+
 		if (structure.super_id_ != kWrongID)
 		{
-			dst.tags_.emplace_back(Tag(structure.id_, kSuperStructPropertyID, kSuperStructPropertyIndex, 0, MemberFieldType::Struct
+			dst.tags_.emplace_back(Tag(kSuperStructPropertyID, kSuperStructPropertyIndex, 0, MemberFieldType::Struct
 				, dst.data_.size(), nest_level, 0, 0));
 			was_saved = SaveStructure(src, dst, Structure::GetStructure(structure.super_id_), nest_level + 1, flags);
 			if (!was_saved)
@@ -131,6 +199,12 @@ namespace save
 			Assert(EPropertyUsage::Main == property.GetPropertyUsage());
 			was_saved |= SaveValue(src + property.GetFieldOffset(), dst, structure, property_index, nest_level, flags);
 		}
+
+		if (!was_saved)
+		{
+			dst.data_.resize(old_dst_size);
+		}
+
 		return was_saved;
 	}
 
@@ -187,7 +261,7 @@ namespace save
 		Assert(property.GetPropertyUsage() == EPropertyUsage::Main || property.GetPropertyUsage() == EPropertyUsage::SubType);
 		const PropertyIndex main_property_idx = structure.GetMainPropertyIndex(property.GetPropertyID());
 		Assert(main_property_idx != kWrongID);
-		dst.tags_.emplace_back(Tag(structure.id_, property.GetPropertyID(), property_index, (property_index - main_property_idx),
+		dst.tags_.emplace_back(Tag(property.GetPropertyID(), property_index, (property_index - main_property_idx),
 			property.GetFieldType(), dst.data_.size(), nest_level, element_index, is_key ? 1 : 0));
 		bool was_saved = false;
 		switch (property.GetFieldType())
@@ -221,13 +295,13 @@ namespace save
 	}
 }
 
-void serialization::DataTemplate::Save(const Object * obj, const Flag32<SaveFlags> flags)
+void serialization::DataTemplate::SaveFromObject(const Object * obj, const Flag32<SaveFlags> flags)
 {
 	Assert(nullptr != obj);
-	Assert(kWrongID == structure_id_); //uninitialized
-	structure_id_ = obj->GetReflectionStructureID();
-	Assert(kWrongID != structure_id_);
-	const auto& structure = Structure::GetStructure(structure_id_);
+	Assert(kWrongID == GetStructID()); //uninitialized
+	const auto structure_id = obj->GetReflectionStructureID();
+	Assert(kWrongID != structure_id);
+	const auto& structure = Structure::GetStructure(structure_id);
 	Assert(structure.RepresentsObjectClass());
 	Assert(tags_.empty() && data_.empty());
 	save::SaveStructure(reinterpret_cast<const uint8*>(obj), *this, structure, 0, flags);
@@ -381,12 +455,13 @@ namespace load
 		return tag_index;
 	}
 }
-void serialization::DataTemplate::Load(Object* obj) const
+void serialization::DataTemplate::LoadIntoObject(Object* obj) const
 {
 	Assert(nullptr != obj);
-	Assert(kWrongID != structure_id_);
-	const auto& structure = Structure::GetStructure(structure_id_);
-	Assert(Structure::GetStructure(obj->GetReflectionStructureID()).IsBasedOn(structure_id_));
+	const auto struct_id = GetStructID();
+	Assert(kWrongID != struct_id);
+	const auto& structure = Structure::GetStructure(struct_id);
+	Assert(Structure::GetStructure(obj->GetReflectionStructureID()).IsBasedOn(struct_id));
 	Assert(structure.RepresentsObjectClass());
 	load::LoadStructure(*this, reinterpret_cast<uint8*>(obj), structure, 0);
 }
@@ -397,26 +472,28 @@ namespace layout_changed
 {
 	using namespace serialization;
 
-	uint32 LoadValue(DataTemplate& dst, const Structure& structure, const DataTemplate& src, uint32 tag_index);
-	uint32 LoadStructure(DataTemplate& dst, const Structure& structure, const DataTemplate& src, uint32 tag_index);
+	bool LoadValue(DataTemplate& dst, const Structure& structure, const DataTemplate& src, uint32& tag_index);
+	bool LoadStructure(DataTemplate& dst, const Structure& structure, const DataTemplate& src, const uint32 src_offset, uint32& tag_index);
 
-	template<typename M> static void LoadSimpleValue(DataTemplate& dst, const uint8* const src, const uint32 src_offset)
+	template<typename M> static bool LoadSimpleValue(DataTemplate& dst, const uint8* const src, const uint32 src_offset)
 	{
 		const auto vec_size = dst.data_.size();
 		dst.data_.resize(vec_size + sizeof(M));
 		GetRef<M>(dst.data_.data(), vec_size) = GetConstRef<M>(src, src_offset);
+		return true;
 	}
 
-	template<> void LoadSimpleValue<Object*>(DataTemplate& dst, const uint8* const src, const uint32 src_offset)
+	template<> bool LoadSimpleValue<Object*>(DataTemplate& dst, const uint8* const src, const uint32 src_offset)
 	{
 		const uint32 dst_offset = dst.data_.size();
 		dst.data_.resize(dst_offset + sizeof(StructID) + sizeof(ObjectID));
 
 		GetRef<StructID>(dst.data_.data(), dst_offset) = GetConstRef<StructID>(src, src_offset);
 		GetRef<ObjectID>(dst.data_.data(), dst_offset + sizeof(StructID)) = GetConstRef<ObjectID>(src, src_offset + sizeof(StructID));
+		return true;
 	}
 
-	template<> void LoadSimpleValue<std::string>(DataTemplate& dst, const uint8* const src, const uint32 src_offset)
+	template<> bool LoadSimpleValue<std::string>(DataTemplate& dst, const uint8* const src, const uint32 src_offset)
 	{
 		const uint16 len = GetConstRef<uint16>(src, src_offset);
 		const char* c_str = &GetConstRef<char>(src, src_offset + sizeof(uint16));
@@ -427,14 +504,15 @@ namespace layout_changed
 		{
 			GetRef<char>(dst.data_.data(), dst_offset + sizeof(uint16) + i * sizeof(char)) = c_str[i];
 		}
+		return true;
 	}
 
-	uint32 LoadArray(DataTemplate& dst, const Structure& structure, const DataTemplate& src, const PropertyIndex main_property_index, const Tag tag, uint32 tag_index)
+	bool LoadArray(DataTemplate& dst, const Structure& structure, const DataTemplate& src, const PropertyIndex main_property_index, const Tag tag, uint32& tag_index)
 	{
 		const auto& property = structure.GetProperty(main_property_index + tag.GetSubPropertyOffset());
 		const PropertyIndex element_property_index = structure.GetSubPropertyIndex(main_property_index + tag.GetSubPropertyOffset(), ESubType::Array_Element);
 		const SubPropertyOffset element_property_offset = element_property_index - main_property_index;
-
+		bool was_saved = false;
 		while (tag_index < src.TagNum())
 		{
 			const Tag inner_tag = src.tags_[tag_index];
@@ -456,18 +534,18 @@ namespace layout_changed
 				tag_index++;
 				continue;
 			}
-			tag_index = LoadValue(dst, structure, src, tag_index);
+			was_saved |= LoadValue(dst, structure, src, tag_index);
 		}
-		return tag_index;
+		return was_saved;
 	}
 
-	uint32 LoadVector(DataTemplate& dst, const Structure& structure, const DataTemplate& src, const PropertyIndex main_property_index, const Tag tag, uint32 tag_index)
+	bool LoadVector(DataTemplate& dst, const Structure& structure, const DataTemplate& src, const PropertyIndex main_property_index, const Tag tag, uint32& tag_index)
 	{
 		const auto& property = structure.GetProperty(main_property_index + tag.GetSubPropertyOffset());
 		const PropertyIndex element_property_index = structure.GetSubPropertyIndex(main_property_index + tag.GetSubPropertyOffset(), ESubType::Vector_Element);
 		const SubPropertyOffset element_property_offset = element_property_index - main_property_index;
 		const uint32 size = GetConstRef<uint16>(src.data_.data(), tag.GetDataOffset());
-		save::SaveLength16(dst.data_, size, Flag32<SaveFlags>());
+		bool was_saved = save::SaveLength16(dst.data_, size, Flag32<SaveFlags>());
 
 		while (tag_index < src.TagNum())
 		{
@@ -492,12 +570,12 @@ namespace layout_changed
 				continue;
 			}
 
-			tag_index = LoadValue(dst, structure, src, tag_index);
+			was_saved |= LoadValue(dst, structure, src, tag_index);
 		}
-		return tag_index;
+		return was_saved;
 	}
 
-	uint32 LoadMap(DataTemplate& dst, const Structure& structure, const DataTemplate& src, const PropertyIndex main_property_index, const Tag tag, uint32 tag_index)
+	bool LoadMap(DataTemplate& dst, const Structure& structure, const DataTemplate& src, const PropertyIndex main_property_index, const Tag tag, uint32& tag_index)
 	{
 		const PropertyIndex map_property_index = main_property_index + tag.GetSubPropertyOffset();
 		const auto& property = structure.GetProperty(map_property_index);
@@ -506,7 +584,7 @@ namespace layout_changed
 		const PropertyIndex value_property_index = structure.GetSubPropertyIndex(map_property_index, ESubType::Map_Value);
 		const SubPropertyOffset value_property_offset = value_property_index - main_property_index;
 		const uint32 map_size = GetConstRef<uint16>(src.data_.data(), tag.GetDataOffset()); //number of keys
-		save::SaveLength16(dst.data_, map_size, Flag32<SaveFlags>());
+		bool was_saved = save::SaveLength16(dst.data_, map_size, Flag32<SaveFlags>());
 		while (tag_index < src.TagNum())
 		{
 			const Tag inner_tag = src.tags_[tag_index];
@@ -534,12 +612,12 @@ namespace layout_changed
 				continue;
 			}
 			
-			tag_index = LoadValue(dst, structure, src, tag_index);
+			was_saved |= LoadValue(dst, structure, src, tag_index);
 		}
-		return tag_index;
+		return was_saved;
 	}
 
-	uint32 LoadValue(DataTemplate& dst, const Structure& structure, const DataTemplate& src, uint32 tag_index)
+	bool LoadValue(DataTemplate& dst, const Structure& structure, const DataTemplate& src, uint32& tag_index)
 	{
 		const Tag tag = src.tags_[tag_index];
 		tag_index++;
@@ -563,45 +641,57 @@ namespace layout_changed
 			return tag_index;
 		}
 		const uint32 saved_data = dst.data_.size();
-		dst.tags_.emplace_back(Tag(structure.id_, property.GetPropertyID(), property_idx, (property_idx - main_property_idx),
+		dst.tags_.emplace_back(Tag(property.GetPropertyID(), property_idx, (property_idx - main_property_idx),
 			property.GetFieldType(), saved_data, tag.GetNestLevel(), tag.GetElementIndex(), tag.IsKey() ? 1 : 0));
+		bool was_saved = false;
 		switch (property.GetFieldType())
 		{
-			case MemberFieldType::Int8:		LoadSimpleValue<uint8>		(dst, src.data_.data(), tag.GetDataOffset());	break;
-			case MemberFieldType::Int16:	LoadSimpleValue<int16>		(dst, src.data_.data(), tag.GetDataOffset());	break;
-			case MemberFieldType::Int32:	LoadSimpleValue<int32>		(dst, src.data_.data(), tag.GetDataOffset());	break;
-			case MemberFieldType::Int64:	LoadSimpleValue<int64>		(dst, src.data_.data(), tag.GetDataOffset());	break;
-			case MemberFieldType::UInt8:	LoadSimpleValue<uint8>		(dst, src.data_.data(), tag.GetDataOffset());	break;
-			case MemberFieldType::UInt16:	LoadSimpleValue<uint16>		(dst, src.data_.data(), tag.GetDataOffset());	break;
-			case MemberFieldType::UInt32:	LoadSimpleValue<uint32>		(dst, src.data_.data(), tag.GetDataOffset());	break;
-			case MemberFieldType::UInt64:	LoadSimpleValue<uint64>		(dst, src.data_.data(), tag.GetDataOffset());	break;
-			case MemberFieldType::Float:	LoadSimpleValue<float>		(dst, src.data_.data(), tag.GetDataOffset());	break;
-			case MemberFieldType::Double:	LoadSimpleValue<double>		(dst, src.data_.data(), tag.GetDataOffset());	break;
-			case MemberFieldType::String:	LoadSimpleValue<std::string>(dst, src.data_.data(), tag.GetDataOffset());	break;
-			case MemberFieldType::ObjectPtr:LoadSimpleValue<Object*>	(dst, src.data_.data(), tag.GetDataOffset());	break;
-			case MemberFieldType::Array:	tag_index = LoadArray		(dst, structure, src, main_property_idx, tag, tag_index);	break;
-			case MemberFieldType::Vector:	tag_index = LoadVector		(dst, structure, src, main_property_idx, tag, tag_index);	break;
-			case MemberFieldType::Map:		tag_index = LoadMap			(dst, structure, src, main_property_idx, tag, tag_index);	break;
-			case MemberFieldType::Struct:	tag_index = LoadStructure(dst,
-				Structure::GetStructure(property.GetOptionalStructID()), src, tag_index);	break;
+			case MemberFieldType::Int8:		was_saved = LoadSimpleValue<uint8>		(dst, src.data_.data(), tag.GetDataOffset());	break;
+			case MemberFieldType::Int16:	was_saved = LoadSimpleValue<int16>		(dst, src.data_.data(), tag.GetDataOffset());	break;
+			case MemberFieldType::Int32:	was_saved = LoadSimpleValue<int32>		(dst, src.data_.data(), tag.GetDataOffset());	break;
+			case MemberFieldType::Int64:	was_saved = LoadSimpleValue<int64>		(dst, src.data_.data(), tag.GetDataOffset());	break;
+			case MemberFieldType::UInt8:	was_saved = LoadSimpleValue<uint8>		(dst, src.data_.data(), tag.GetDataOffset());	break;
+			case MemberFieldType::UInt16:	was_saved = LoadSimpleValue<uint16>		(dst, src.data_.data(), tag.GetDataOffset());	break;
+			case MemberFieldType::UInt32:	was_saved = LoadSimpleValue<uint32>		(dst, src.data_.data(), tag.GetDataOffset());	break;
+			case MemberFieldType::UInt64:	was_saved = LoadSimpleValue<uint64>		(dst, src.data_.data(), tag.GetDataOffset());	break;
+			case MemberFieldType::Float:	was_saved = LoadSimpleValue<float>		(dst, src.data_.data(), tag.GetDataOffset());	break;
+			case MemberFieldType::Double:	was_saved = LoadSimpleValue<double>		(dst, src.data_.data(), tag.GetDataOffset());	break;
+			case MemberFieldType::String:	was_saved = LoadSimpleValue<std::string>(dst, src.data_.data(), tag.GetDataOffset());	break;
+			case MemberFieldType::ObjectPtr:was_saved = LoadSimpleValue<Object*>	(dst, src.data_.data(), tag.GetDataOffset());	break;
+			case MemberFieldType::Array:	was_saved = LoadArray		(dst, structure, src, main_property_idx, tag, tag_index);	break;
+			case MemberFieldType::Vector:	was_saved = LoadVector		(dst, structure, src, main_property_idx, tag, tag_index);	break;
+			case MemberFieldType::Map:		was_saved = LoadMap			(dst, structure, src, main_property_idx, tag, tag_index);	break;
+			case MemberFieldType::Struct:	was_saved = LoadStructure(dst,
+				Structure::GetStructure(property.GetOptionalStructID()), src, tag.GetDataOffset(), tag_index);	break;
 		}
-		if (saved_data == dst.data_.size())
+		if (!was_saved)
 		{
 			dst.tags_.pop_back();
 		}
 		return tag_index;
 	}
 
-	uint32 LoadStructure(DataTemplate& dst, const Structure& structure, const DataTemplate& src, uint32 tag_index)
+	bool LoadStructure(DataTemplate& dst, const Structure& structure, const DataTemplate& src, const uint32 src_offset, uint32& tag_index)
 	{
+		bool was_saved = false;
 		if (tag_index < src.TagNum())
 		{
+			const auto old_dst_size = dst.data_.size();
+			const auto actual_struct_id = GetConstRef<StructID>(src.data_.data(), src_offset);
+			save::SaveStructId(dst.data_, actual_struct_id);
+			const bool structs_match = actual_struct_id == structure.id_;
+			if (!structs_match)
+			{
+				const Structure* actual_struct = Structure::TryGetStructure(actual_struct_id);
+				ErrorStream() << "Error layout_changed::LoadStructure - expected structure: '" << structure.GetName() << "' actual structure: '"
+					<< (actual_struct ? actual_struct->GetName().c_str() : "unknown") << '\n';
+			}
+
 			const Tag first_tag = src.tags_[tag_index];
 			while (tag_index < src.TagNum())
 			{
 				const Tag tag = src.tags_[tag_index];
-				if (tag.GetNestLevel() == first_tag.GetNestLevel() && tag.GetElementIndex() == first_tag.GetElementIndex() && tag.IsKey() == first_tag.IsKey()
-					&& structure.id_ == tag.GetStructID())
+				if (structs_match && tag.GetNestLevel() == first_tag.GetNestLevel() && tag.GetElementIndex() == first_tag.GetElementIndex() && tag.IsKey() == first_tag.IsKey())
 				{
 					if (kSuperStructPropertyID == tag.GetPropertyID())
 					{
@@ -610,13 +700,14 @@ namespace layout_changed
 						if (super_struct)
 						{
 							const uint32 saved_data = dst.data_.size();
-							dst.tags_.emplace_back(Tag(structure.id_, kSuperStructPropertyID, kSuperStructPropertyIndex, 0, MemberFieldType::Struct
+							dst.tags_.emplace_back(Tag(kSuperStructPropertyID, kSuperStructPropertyIndex, 0, MemberFieldType::Struct
 								, saved_data, tag.GetNestLevel(), 0, 0));
-							tag_index = LoadStructure(dst, *super_struct, src, tag_index);
-							if (saved_data == dst.data_.size())
+							const bool super_was_saved = LoadStructure(dst, *super_struct, src, tag.GetDataOffset(), tag_index);
+							if (!super_was_saved)
 							{
 								dst.tags_.pop_back();
 							}
+							was_saved |= super_was_saved;
 						}
 						else
 						{
@@ -625,7 +716,7 @@ namespace layout_changed
 					}
 					else
 					{
-						tag_index = LoadValue(dst, structure, src, tag_index);
+						was_saved |= LoadValue(dst, structure, src, tag_index);
 					}
 				}
 				else if (tag.GetNestLevel() < first_tag.GetNestLevel())
@@ -634,41 +725,32 @@ namespace layout_changed
 				}
 				else
 				{
-					if (structure.id_ != tag.GetStructID())
-					{
-						const Structure* actual_struct = Structure::TryGetStructure(tag.GetStructID());
-						ErrorStream() << "Error layout_changed::LoadStructure - expected structure: '" << structure.GetName() << "' actual structure: '"
-							<< (actual_struct ? actual_struct->GetName().c_str() : "unknown") << '\n';
-					}
 					tag_index++;
 				}
 			}
+
+			if (!was_saved)
+			{
+				dst.data_.resize(old_dst_size);
+			}
 		}
-		return tag_index;
+		return was_saved;
 	}
 };
 
 void serialization::DataTemplate::RefreshAfterLayoutChanged(const StructID struct_id)
 {
-	Assert(kWrongID != struct_id);
-	structure_id_ = kWrongID;
+	Assert(kWrongID != GetStructID());
 
 	const auto& structure = Structure::GetStructure(struct_id);
 	Assert(structure.RepresentsObjectClass() && structure.Validate());
 
 	DataTemplate refreshed_dt;
-	refreshed_dt.structure_id_ = struct_id;
-
-	layout_changed::LoadStructure(refreshed_dt, structure, *this, 0);
+	uint32 tag_index = 0;
+	layout_changed::LoadStructure(refreshed_dt, structure, *this, 0, tag_index);
 
 	*this = refreshed_dt;
-}
-
-DataTemplate serialization::DataTemplate::Clone() const
-{
-	Assert(!tags_.empty() && !data_.empty());
-	Assert(kWrongID != structure_id_);
-	return *this;
+	Assert(kWrongID != GetStructID());
 }
 
 namespace dt_operation
@@ -677,7 +759,7 @@ namespace dt_operation
 
 	bool TagsEqual(const Tag a, const Tag b)
 	{
-		Assert(a.GetStructID() == b.GetStructID());
+		//byte_offset_ is skipped
 
 		const bool are_equal =
 			a.GetPropertyIndex() == b.GetPropertyIndex() &&
@@ -695,8 +777,6 @@ namespace dt_operation
 	//returns if a goes before b
 	bool IsTagFirst(const Tag a, const Tag b)
 	{
-		Assert(a.GetStructID() == b.GetStructID());
-
 		if (a.GetPropertyIndex() == b.GetPropertyIndex())
 		{
 			if (a.GetElementIndex() < b.GetElementIndex())
@@ -716,7 +796,7 @@ namespace dt_operation
 	void CopySingleTagUnchecked(DataTemplate& dst, const DataTemplate& src, const uint32 tag_index, const uint32 nest_lvl_offset)
 	{
 		const Tag tag = src.tags_[tag_index];
-		dst.tags_.emplace_back(Tag(tag.GetStructID(), tag.GetPropertyID(), tag.GetPropertyIndex(), tag.GetSubPropertyOffset(),
+		dst.tags_.emplace_back(Tag(tag.GetPropertyID(), tag.GetPropertyIndex(), tag.GetSubPropertyOffset(),
 			tag.GetFieldType(), dst.data_.size(), tag.GetNestLevel() + nest_lvl_offset, tag.GetElementIndex(), tag.IsKey() ? 1 : 0));
 
 		const uint32 src_data_chunk_end = (src.TagNum() > (tag_index + 1)) ? src.tags_[tag_index + 1].GetDataOffset() : src.data_.size();
@@ -838,7 +918,7 @@ namespace dt_operation
 		ctx.lower_tag_index++;
 		Assert(TagsEqual(low_tag, high_tag));
 		const auto& property = structure.GetProperty(high_tag.GetPropertyIndex());
-		ctx.dst.tags_.emplace_back(Tag(structure.id_, property.GetPropertyID(), high_tag.GetPropertyIndex(), high_tag.GetSubPropertyOffset(),
+		ctx.dst.tags_.emplace_back(Tag(property.GetPropertyID(), high_tag.GetPropertyIndex(), high_tag.GetSubPropertyOffset(),
 			property.GetFieldType(), ctx.dst.data_.size(), high_tag.GetNestLevel(), high_tag.GetElementIndex(), high_tag.IsKey() ? 1 : 0));
 		bool was_saved = false;
 		switch (property.GetFieldType())
@@ -882,16 +962,16 @@ namespace dt_operation
 	{
 		if (ctx.AnyReachedEnd())
 			return false;
-		Assert(ctx.GetLowTag().GetStructID() == ctx.GetHighTag().GetStructID());
-		Assert(ctx.GetLowTag().GetStructID() == structure.id_);
+		//Assert(ctx.GetLowTag().GetStructID() == ctx.GetHighTag().GetStructID());
+		//Assert(ctx.GetLowTag().GetStructID() == structure.id_);
 		const uint32 max_nest_lvl = std::max(ctx.GetLowTag().GetNestLevel() + ctx.nest_lvl_offset, ctx.GetHighTag().GetNestLevel());
 		bool was_saved = false;
 		do
 		{
 			const Tag higher_tag = ctx.higher_dt.tags_[ctx.higher_tag_index];
 			const Tag lower_tag = ctx.lower_dt.tags_[ctx.lower_tag_index];
-			const bool lower_in_struct = (lower_tag.GetNestLevel() + ctx.nest_lvl_offset == max_nest_lvl) && (lower_tag.GetStructID() == structure.id_);
-			const bool higher_in_struct = (higher_tag.GetNestLevel() == (max_nest_lvl)) && (higher_tag.GetStructID() == structure.id_);
+			const bool lower_in_struct = (lower_tag.GetNestLevel() + ctx.nest_lvl_offset == max_nest_lvl);// TODO: && (lower_tag.GetStructID() == structure.id_);
+			const bool higher_in_struct = (higher_tag.GetNestLevel() == max_nest_lvl);// TODO:  && (higher_tag.GetStructID() == structure.id_);
 			if (lower_in_struct && higher_in_struct && TagsEqual(lower_tag, higher_tag))
 			{
 				if (kSuperStructPropertyID == higher_tag.GetPropertyID())
@@ -900,7 +980,7 @@ namespace dt_operation
 					ctx.lower_tag_index++;
 					const Structure* super_struct = structure.TryGetSuperStructure();
 					Assert(super_struct);
-					ctx.dst.tags_.emplace_back(Tag(structure.id_, kSuperStructPropertyID, kSuperStructPropertyIndex, 0, MemberFieldType::Struct
+					ctx.dst.tags_.emplace_back(Tag(kSuperStructPropertyID, kSuperStructPropertyIndex, 0, MemberFieldType::Struct
 						, ctx.dst.data_.size(), higher_tag.GetNestLevel(), 0, 0));
 					const bool was_super_struct_safe = ProcessInner(ctx, *super_struct, 1);
 					if (!was_super_struct_safe)
@@ -940,12 +1020,11 @@ namespace dt_operation
 
 	DataTemplate Process(const DataTemplate& lower_dt, const DataTemplate& higher_dt, const EDataTemplateOperation op)
 	{
-		Assert(kWrongID != lower_dt.structure_id_);
-		Assert(kWrongID != higher_dt.structure_id_);
-		Assert(Structure::GetStructure(higher_dt.structure_id_).IsBasedOn(lower_dt.structure_id_));
+		Assert(kWrongID != lower_dt.GetStructID());
+		Assert(kWrongID != higher_dt.GetStructID());
+		Assert(Structure::GetStructure(higher_dt.GetStructID()).IsBasedOn(lower_dt.GetStructID()));
 
 		DataTemplate dst;
-		dst.structure_id_ = higher_dt.structure_id_;
 		dst.tags_.reserve(std::max(higher_dt.TagNum(), lower_dt.TagNum()));
 		dst.data_.reserve(std::max(higher_dt.data_.size(), lower_dt.data_.size()));
 
@@ -953,19 +1032,19 @@ namespace dt_operation
 		uint32 nest_lvl_offset = 0;
 		if (lower_tag_index < lower_dt.TagNum() && higher_tag_index < higher_dt.TagNum())
 		{
-			const StructID lower_struct_id = lower_dt.structure_id_;
-			StructID higher_struct_id = higher_dt.structure_id_;
+			const StructID lower_struct_id = lower_dt.GetStructID();
+			StructID higher_struct_id = higher_dt.GetStructID();
 			while (higher_struct_id != lower_struct_id)
 			{
 				Assert(kWrongID != higher_struct_id);
 				const Tag super_struct_high = higher_dt.tags_[higher_tag_index];
 				Assert(super_struct_high.GetPropertyID() == kSuperStructPropertyID);
 				Assert(super_struct_high.GetPropertyIndex() == kSuperStructPropertyIndex);
-				Assert(super_struct_high.GetStructID() == higher_struct_id);
+				//Assert(super_struct_high.GetStructID() == higher_struct_id);
 				Assert(super_struct_high.GetNestLevel() == nest_lvl_offset);
 				higher_struct_id = Structure::GetStructure(higher_struct_id).super_id_;
 
-				dst.tags_.emplace_back(Tag(higher_struct_id, kSuperStructPropertyID, kSuperStructPropertyIndex, 0, MemberFieldType::Struct
+				dst.tags_.emplace_back(Tag(kSuperStructPropertyID, kSuperStructPropertyIndex, 0, MemberFieldType::Struct
 					, dst.data_.size(), nest_lvl_offset, 0, 0));
 
 				higher_tag_index++;

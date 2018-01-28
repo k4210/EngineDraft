@@ -1,8 +1,5 @@
 #include "reflection.h"
 #include "data_template.h"
-#include "data_storage.h"
-#define RAPIDJSON_HAS_STDSTRING 1
-#include "rapidjson/prettywriter.h"
 
 #include <iostream>
 #include <fstream>
@@ -65,8 +62,6 @@ public:
 	static reflection::Structure& StaticRegisterStructure()
 	{
 		auto& structure = reflection::Structure::CreateStructure(StaticGetReflectionStructureID(), sizeof(ObjSample), reflection::Object::StaticGetReflectionStructureID());
-		structure.get_obj_id = GetObjectID_Stub;
-		structure.obj_from_id = GetObjectFromID_Stub;
 		DEFINE_PROPERTY(ObjSample, string_);
 		DEFINE_PROPERTY(ObjSample, obj_);
 		DEFINE_PROPERTY(ObjSample, sample_);
@@ -92,26 +87,12 @@ public:
 	static reflection::Structure& StaticRegisterStructure()
 	{
 		auto& structure = reflection::Structure::CreateStructure(StaticGetReflectionStructureID(), sizeof(ObjAdvanced), ObjSample::StaticGetReflectionStructureID());
-		structure.get_obj_id = GetObjectID_Stub;
-		structure.obj_from_id = GetObjectFromID_Stub;
 		DEFINE_PROPERTY(ObjAdvanced, adv_string_);
 		Assert(structure.Validate());
 		return structure;
 	}
 };
 REGISTER_STRUCTURE(ObjAdvanced);
-
-void PrintDataTemplate(const serialization::DataTemplate& dt)
-{
-	rapidjson::StringBuffer sb;
-	rapidjson::PrettyWriter<rapidjson::StringBuffer> writer(sb);
-
-	serialization::JsonDataStorage data_storage;
-	data_storage.Save(writer, dt);
-
-	std::cout << sb.GetString();
-	std::cout << "\n";
-}
 
 void PrintStructure(const reflection::Structure& structure, bool print_label)
 {
@@ -145,6 +126,7 @@ int main()
 	std::cout.rdbuf(out.rdbuf()); //redirect std::cout to out.txt!
 	{
 		serialization::DataTemplate data_template; //higher
+		std::string str_0;
 		{
 			ObjAdvanced obj;
 			PrintStructure(reflection::Structure::GetStructure(obj.GetReflectionStructureID()), true);
@@ -156,34 +138,40 @@ int main()
 			obj.map_[StructSample(2)] = 8;
 			obj.map_[StructSample(3)] = 16;
 
-			data_template.Save(&obj, serialization::SaveFlags::None);
-			PrintDataTemplate(data_template);
+			data_template.SaveFromObject(&obj, serialization::SaveFlags::None);
+			str_0 = data_template.ToString();
+			std::cout << str_0 << "\n";
 
-			std::cout.flush();
-			out.flush();
-
-			//data_template.RefreshAfterLayoutChanged(obj.GetReflectionStructureID());
-			//PrintDataTemplate(data_template);
-
-			//std::cout.flush();
-			//out.flush();
+			data_template.RefreshAfterLayoutChanged(obj.GetReflectionStructureID());
+			const auto str_1 = data_template.ToString();
+			std::cout << str_1 << "\n";
+			Assert(str_0 == str_1);
 		}
 		
-		//ObjAdvanced obj_clone;
-		//data_template.Load(&obj_clone);
+		{
+			ObjAdvanced obj_clone;
+			data_template.LoadIntoObject(&obj_clone);
 
+			serialization::DataTemplate data_template_2;
+			data_template_2.SaveFromObject(&obj_clone, serialization::SaveFlags::None);
+			const auto str_2 = data_template_2.ToString();
+			std::cout << str_2 << "\n";
+			Assert(str_0 == str_2);
+		}
+		/*
 		serialization::DataTemplate data_template_lower; //higher
 		{
 			ObjSample obj;
 			obj.string_ = "lower_value";
-			data_template_lower.Save(&obj, serialization::SaveFlags::None);
+			data_template_lower.SaveFromObject(&obj, serialization::SaveFlags::None);
 			PrintDataTemplate(data_template_lower);
 		}
 
 		//const serialization::DataTemplate data_template_clone = data_template.Clone();
-		//data_template_clone.Save(&obj_clone, serialization::SaveFlags::None);//Flag32<serialization::SaveFlags>());//
+		//data_template_clone.SaveFromObject(&obj_clone, serialization::SaveFlags::None);//Flag32<serialization::SaveFlags>());//
 		const serialization::DataTemplate data_template_diff = serialization::DataTemplate::Diff(data_template, data_template_lower);
 		PrintDataTemplate(data_template_diff);
+		*/
 		
 	}
 	std::cout.rdbuf(coutbuf); //reset to standard output again

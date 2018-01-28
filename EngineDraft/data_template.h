@@ -1,4 +1,5 @@
 #pragma once
+#include <iostream>
 #include "utils.h"
 #include "reflection.h"
 
@@ -11,7 +12,6 @@ namespace serialization
 	class Tag
 	{
 		// Redundant fields are needed to restore data after layout was changed
-		StructID struct_id_ = kWrongID;		// ~redundant
 		PropertyID property_id_ = kWrongID;	// redundant
 
 		uint32 byte_offset_ : 16;
@@ -22,7 +22,7 @@ namespace serialization
 		uint32 type_ : 5;					// redundant
 		uint32 sub_property_offset_ : 5;	// redundant
 		uint32 property_index_ : 14;		
-
+		uint32 flags_ : 8;
 		//8 bits left - flags, etc..
 
 	public:
@@ -33,16 +33,16 @@ namespace serialization
 		PropertyIndex		GetPropertyIndex()		const { return property_index_; }
 
 		// only needed to refresh after layout was changed:
-		StructID			GetStructID()			const { return struct_id_; }
+		//StructID			GetStructID()			const { return struct_id_; }
 		PropertyID			GetPropertyID()			const { return property_id_; }
 		MemberFieldType		GetFieldType()			const { return static_cast<MemberFieldType>(type_); }
 		SubPropertyOffset	GetSubPropertyOffset()	const { return sub_property_offset_; }
 
-		Tag(StructID struct_id, PropertyID property_id, PropertyIndex property_index
+		Tag() = default;
+		Tag(PropertyID property_id, PropertyIndex property_index
 			, SubPropertyOffset sub_property_offset, MemberFieldType type
 			, uint32 byte_offset, uint32 nest_level, uint32 element_index, uint32 is_key)
-			: struct_id_(struct_id)
-			, property_id_(property_id)
+			: property_id_(property_id)
 			, byte_offset_(byte_offset)
 			, element_index_(element_index)
 			, nest_level_(nest_level)
@@ -67,21 +67,34 @@ namespace serialization
 		SkipNativeDefaultValues = 1 << 0,
 	};
 
+	__interface ObjectSolver
+	{
+		ObjectID IdFromObject(const Object* obj);
+		Object* ObjectFromId(ObjectID id);
+	};
+
 	struct DataTemplate
 	{
 		std::vector<Tag> tags_;
 		std::vector<uint8> data_;
-		StructID structure_id_ = kWrongID;
 
+		StructID GetStructID() const;
 		uint32 TagNum() const { return tags_.size(); }
+		DataTemplate Clone() const { return *this; }
 
-		void Save(const Object* obj, const Flag32<SaveFlags> flags);
-		void Load(Object* obj) const;
-
-		DataTemplate Clone() const;
+		std::string ToString() const;
 		void RefreshAfterLayoutChanged(const StructID struct_id);
+
+		//Todo: add object solver
+		void SaveFromObject(const Object* obj, const Flag32<SaveFlags> flags);
+		void LoadIntoObject(Object* obj) const;
 
 		static DataTemplate Merge(const DataTemplate& lower_dt, const DataTemplate& higher_dt); // 
 		static DataTemplate Diff(const DataTemplate& higher_dt, const DataTemplate& lower_dt); //= higher_dt - lower_dt
 	};
+
+	std::istream& operator>> (std::istream& is, Tag& t);
+	std::ostream& operator<< (std::ostream& os, const Tag& t);
+	std::istream& operator>> (std::istream& is, DataTemplate& dt);
+	std::ostream& operator<< (std::ostream& os, const DataTemplate& dt);
 }

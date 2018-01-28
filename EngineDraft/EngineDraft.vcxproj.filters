@@ -10,22 +10,40 @@
     <Filter Include="Serialization">
       <UniqueIdentifier>{04f30daa-9463-4ef3-8afc-d2c0bfdbc490}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Serialization\Private">
+      <UniqueIdentifier>{2b2f3c55-1ce3-47a1-8ba4-2c6a2e97612a}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Actor">
+      <UniqueIdentifier>{914e58cf-f5d2-4d92-be42-7dd27e920150}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Asset">
+      <UniqueIdentifier>{449e0141-b70b-4162-9e3e-3a17524b94bd}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="reflection.h">
-      <Filter>Reflection</Filter>
-    </ClInclude>
     <ClInclude Include="basic_types.h">
       <Filter>Utils</Filter>
     </ClInclude>
     <ClInclude Include="utils.h">
       <Filter>Utils</Filter>
     </ClInclude>
-    <ClInclude Include="data_template.h">
+    <ClInclude Include="reflection.h">
+      <Filter>Reflection</Filter>
+    </ClInclude>
+    <ClInclude Include="text_serialization.h">
+      <Filter>Serialization\Private</Filter>
+    </ClInclude>
+    <ClInclude Include="object_archive.h">
       <Filter>Serialization</Filter>
     </ClInclude>
-    <ClInclude Include="data_storage.h">
-      <Filter>Serialization</Filter>
+    <ClInclude Include="actor.h">
+      <Filter>Actor</Filter>
+    </ClInclude>
+    <ClInclude Include="asset.h">
+      <Filter>Asset</Filter>
+    </ClInclude>
+    <ClInclude Include="data_template.h">
+      <Filter>Serialization\Private</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
@@ -34,7 +52,19 @@
       <Filter>Reflection</Filter>
     </ClCompile>
     <ClCompile Include="data_template.cpp">
-      <Filter>Serialization</Filter>
+      <Filter>Serialization\Private</Filter>
+    </ClCompile>
+    <ClCompile Include="text_serialization.cpp">
+      <Filter>Serialization\Private</Filter>
+    </ClCompile>
+    <ClCompile Include="actor.cpp">
+      <Filter>Actor</Filter>
+    </ClCompile>
+    <ClCompile Include="asset.cpp">
+      <Filter>Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="object_archive.cpp">
+      <Filter>Serialization\Private</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

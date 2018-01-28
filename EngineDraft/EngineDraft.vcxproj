@@ -120,13 +120,20 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="actor.cpp" />
+    <ClCompile Include="asset.cpp" />
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="object_archive.cpp" />
     <ClCompile Include="reflection.cpp" />
     <ClCompile Include="data_template.cpp" />
+    <ClCompile Include="text_serialization.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="actor.h" />
+    <ClInclude Include="asset.h" />
     <ClInclude Include="basic_types.h" />
-    <ClInclude Include="data_storage.h" />
+    <ClInclude Include="object_archive.h" />
+    <ClInclude Include="text_serialization.h" />
     <ClInclude Include="reflection.h" />
     <ClInclude Include="data_template.h" />
     <ClInclude Include="utils.h" />
